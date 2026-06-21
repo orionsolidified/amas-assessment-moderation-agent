@@ -45,6 +45,18 @@ flowchart LR
     E[Promptfoo] --> N
 ```
 
+## Installing into an existing n8n server
+
+When n8n, AnythingLLM, and Promptfoo already run on the server, do **not** launch the standalone Compose stack unchanged. Use the environment integration manager instead:
+
+```bash
+sudo ./scripts/amas_env_manager.sh install
+```
+
+It discovers the existing Docker Compose project, creates root-only AMAS environment files, adds a reversible Compose override, recreates only the selected n8n execution services, and installs the `amas-env` management command. It preserves the existing n8n encryption key, database configuration, and public routing.
+
+See [`docs/EXISTING_N8N_ENV_INSTALLER.md`](docs/EXISTING_N8N_ENV_INSTALLER.md) for non-interactive options, queue-mode handling, verification, token rotation, backups, and rollback.
+
 ## Quick start
 
 ### 1. Generate configuration secrets

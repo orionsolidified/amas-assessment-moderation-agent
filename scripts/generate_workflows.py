@@ -831,7 +831,7 @@ WITH upd AS (
 SELECT (
   $4::jsonb
   || CASE WHEN $6::boolean
-       THEN jsonb_build_object('storage',jsonb_build_object('bucket',$2,'key',$3,'sha256',$5,'archived',true))
+       THEN jsonb_build_object('storage',jsonb_build_object('bucket',$2,'key',$3,'sha256',$5::text,'archived',true))
        ELSE jsonb_build_object('storage',jsonb_build_object('archived',false),'warnings',jsonb_build_array($7::jsonb))
      END
 ) AS output;

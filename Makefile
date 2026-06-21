@@ -1,4 +1,4 @@
-.PHONY: generate validate test secrets up down logs migrate prompts workflows policies demo evals redteam backup
+.PHONY: generate validate test secrets up down logs migrate prompts workflows policies demo evals redteam backup existing-env-install
 
 generate:
 	python3 scripts/generate_workflows.py
@@ -44,3 +44,6 @@ redteam:
 
 backup:
 	./scripts/backup.sh
+
+existing-env-install:
+	sudo ./scripts/amas_env_manager.sh install

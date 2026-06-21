@@ -178,7 +178,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH upd AS (\n UPDATE amas.reports\n SET storage_bucket=NULLIF($2,''), storage_key=NULLIF($3,'')\n WHERE id=$1::uuid AND NULLIF($2,'') IS NOT NULL AND NULLIF($3,'') IS NOT NULL\n RETURNING id\n)\nSELECT (\n  $4::jsonb\n  || CASE WHEN $6::boolean\n       THEN jsonb_build_object('storage',jsonb_build_object('bucket',$2,'key',$3,'sha256',$5,'archived',true))\n       ELSE jsonb_build_object('storage',jsonb_build_object('archived',false),'warnings',jsonb_build_array($7::jsonb))\n     END\n) AS output;",
+        "query": "WITH upd AS (\n UPDATE amas.reports\n SET storage_bucket=NULLIF($2,''), storage_key=NULLIF($3,'')\n WHERE id=$1::uuid AND NULLIF($2,'') IS NOT NULL AND NULLIF($3,'') IS NOT NULL\n RETURNING id\n)\nSELECT (\n  $4::jsonb\n  || CASE WHEN $6::boolean\n       THEN jsonb_build_object('storage',jsonb_build_object('bucket',$2,'key',$3,'sha256',$5::text,'archived',true))\n       ELSE jsonb_build_object('storage',jsonb_build_object('archived',false),'warnings',jsonb_build_array($7::jsonb))\n     END\n) AS output;",
         "options": {
           "queryReplacement": "={{ [$json.report_id,$json.storage_bucket,$json.storage_key,JSON.stringify($json.stored_output),$json.sha256,$json.archive_ok,JSON.stringify($json.warning || {code:'REPORT_OBJECT_ARCHIVE_FAILED'})] }}"
         }
