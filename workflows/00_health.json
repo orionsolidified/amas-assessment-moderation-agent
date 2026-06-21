@@ -1,0 +1,83 @@
+{
+  "name": "AMAS 00 - Health",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "amas/health",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "49ba8964-bc3a-5216-abc0-d9903590a6a4",
+      "name": "Health Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json: {\n  status: 'ok',\n  service: 'AMAS n8n orchestration',\n  workflow_version: $env.AMAS_WORKFLOW_VERSION || 'unknown',\n  corpus_version: $env.AMAS_CORPUS_VERSION || 'unknown',\n  execution_id: $execution.id,\n  time: new Date().toISOString()\n}}];"
+      },
+      "id": "675994f1-d5d6-5b9f-8b95-245be8768672",
+      "name": "Build Health Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "1ceee465-a899-5b34-ba56-35990c3ceb6b",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        480,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Health Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Health Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Health Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "ff456e32-b7f2-58b9-a9ff-34106a775ebc",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

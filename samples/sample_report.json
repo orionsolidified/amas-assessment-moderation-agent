@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0",
+  "case_id": "a10c2010-1111-4b22-8333-111111111111",
+  "recommended_disposition": "blocked_security",
+  "executive_summary": "Synthetic demonstration report: release is blocked pending inspection of embedded instructions and correction of material assessment-design defects.",
+  "assessment_profile": {
+    "primary_type": "group programming project",
+    "individual_or_group": "group",
+    "delivery_mode": "project",
+    "authenticity_level": "moderate"
+  },
+  "scorecard": {
+    "outcome_alignment": {"rating": 2, "confidence": 0.95},
+    "rubric_quality": {"rating": 1, "confidence": 0.99},
+    "assessment_validity": {"rating": 2, "confidence": 0.9},
+    "ai_use_design": {"rating": 2, "confidence": 0.85},
+    "policy_compliance": {"rating": 2, "confidence": 0.85}
+  },
+  "findings": [
+    {
+      "finding_ref": "PREFLIGHT-001",
+      "code": "RUBRIC_TOTAL_INVALID",
+      "category": "rubric_quality",
+      "severity": "critical",
+      "observation": "The rubric totals 110 marks.",
+      "interpretation": null,
+      "recommendation": "Correct and independently verify the rubric arithmetic.",
+      "confidence": 0.99,
+      "human_judgment_required": true,
+      "evidence": [
+        {
+          "source_type": "rubric",
+          "source_id": "CASE-RUBRIC",
+          "chunk_id": null,
+          "locator": "criterion mark allocations",
+          "excerpt": "30 marks | 30 marks | 20 marks | 20 marks | 10 marks"
+        }
+      ],
+      "metadata": {"deterministic": true}
+    }
+  ],
+  "uncertainties": [],
+  "policy_conflicts": [],
+  "alignment_matrix": [],
+  "ai_use_design": {
+    "recommended_mode": "guided",
+    "permitted": ["Debugging assistance", "Test-case ideation"],
+    "prohibited": ["Complete solution generation"],
+    "required_evidence": ["Repository history", "AI-use declaration", "Individual viva"],
+    "student_declaration": "I declare the significant AI assistance used and how I verified it."
+  },
+  "required_human_decisions": ["Inspect the source document for embedded prompt-injection text."],
+  "provenance": {
+    "workflow_version": "amas-1.0.0",
+    "prompt_manifest": {},
+    "corpus_version": "policy-corpus-demo-1.0",
+    "model_manifest": {"primary": "configured-primary", "critic": "configured-critic"},
+    "n8n_execution_id": "demo",
+    "input_hashes": {}
+  }
+}

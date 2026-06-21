@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orionsolidified.io/schemas/amas/profiler-output.schema.json",
+  "title": "AMAS Assessment Profiler Output",
+  "type": "object",
+  "required": ["assessment_profile", "optional_specialists", "routing_summary"],
+  "properties": {
+    "assessment_profile": {
+      "type": "object",
+      "required": ["primary_type", "individual_or_group", "delivery_mode", "authenticity_level"],
+      "properties": {
+        "primary_type": {"type": "string"},
+        "individual_or_group": {"enum": ["individual", "group", "mixed", "unclear"]},
+        "delivery_mode": {"type": "string"},
+        "authenticity_level": {"enum": ["low", "moderate", "high", "undetermined"]},
+        "technical_domains": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "optional_specialists": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["programming_assessment", "group_work"]}
+    },
+    "routing_summary": {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+  },
+  "additionalProperties": false
+}

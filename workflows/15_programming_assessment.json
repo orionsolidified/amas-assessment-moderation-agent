@@ -1,0 +1,263 @@
+{
+  "name": "AMAS 15 - Programming Assessment Specialist",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "amas/internal/specialist/programming-assessment",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "00925f41-19dd-5c1d-9203-a35955db189b",
+      "name": "LLM Workflow Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const headers = $json.headers || {};\nconst auth = String(headers.authorization || headers.Authorization || '');\nconst bearer = auth.replace(/^Bearer\\s+/i, '');\nconst received = String(headers['x-amas-internal-token'] || bearer || '');\nconst expected = String($env.AMAS_INTERNAL_TOKEN || '');\nif (!expected) throw new Error('AMAS_INTERNAL_TOKEN is not configured');\nif (received.length !== expected.length) throw new Error('Unauthorized');\nlet diff = 0;\nfor (let i = 0; i < expected.length; i++) diff |= received.charCodeAt(i) ^ expected.charCodeAt(i);\nif (diff !== 0) throw new Error('Unauthorized');\nconst body = $json.body ?? $json;\n\nreturn [{ json: body }];"
+      },
+      "id": "6e118c53-06bb-5790-8a6c-989bd217c8c6",
+      "name": "Authenticate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id::text AS prompt_version_id,prompt_key,version,system_prompt,user_template,output_schema,model_config,content_sha256,$2::jsonb AS context\nFROM amas.prompt_versions WHERE prompt_key=$1 AND active=TRUE LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ ['programming_assessment',JSON.stringify($json)] }}"
+        }
+      },
+      "id": "11aefa22-a387-5812-a3b7-15bc10b67c4c",
+      "name": "Load Active Prompt",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        420,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "amas-postgresql-placeholder",
+          "name": "AMAS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $json.context || {};\nconst stringify = (v) => JSON.stringify(v ?? {}, null, 2);\nconst replacements = {\n  '{{CASE_BUNDLE_JSON}}': stringify(ctx.case_bundle),\n  '{{PREFLIGHT_JSON}}': stringify(ctx.preflight),\n  '{{POLICY_JSON}}': stringify(ctx.policy_evidence || ctx.policy),\n  '{{VERIFIED_FINDINGS_JSON}}': stringify(ctx.verified_findings || ctx.verification?.verified_findings),\n  '{{REJECTED_FINDINGS_JSON}}': stringify(ctx.rejected_findings || ctx.verification?.rejected_findings),\n  '{{CRITIC_JSON}}': stringify(ctx.critic),\n  '{{PROVENANCE_JSON}}': stringify(ctx.provenance_seed)\n};\nlet user = String($json.user_template || '');\nfor (const [token,value] of Object.entries(replacements)) user = user.split(token).join(value);\nconst system = `${$json.system_prompt}\\n\\nOUTPUT CONTRACT (JSON Schema):\\n${stringify($json.output_schema)}\\nReturn only the JSON object.`;\nconst cfg = $json.model_config || {};\nconst model = ctx.model || (ctx.use_critic_model ? $env.LLM_CRITIC_MODEL : $env.LLM_PRIMARY_MODEL);\nreturn [{json:{context:ctx,prompt_version_id:$json.prompt_version_id,prompt_key:$json.prompt_key,prompt_version:$json.version,prompt_hash:$json.content_sha256,started_at_ms:Date.now(),llm_request:{model,messages:[{role:'system',content:system},{role:'user',content:user}],temperature:Number(cfg.temperature ?? 0),max_tokens:Number(cfg.max_tokens ?? 4500),response_format:{type:'json_object'}}}}];"
+      },
+      "id": "37fab41f-333d-5ad3-9d70-2530dd4231e0",
+      "name": "Build LLM Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LLM_BASE_URL.replace(/\\/$/, '') + '/chat/completions' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.llm_request) }}",
+        "options": {
+          "timeout": 300000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "2a918b5d-d132-5366-b167-266d65db665c",
+      "name": "Call Model Gateway",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "amas-llm-api-placeholder",
+          "name": "AMAS LLM API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const built = $('Build LLM Request').item.json;\nconst raw = $json;\nfunction contentOf(x) {\n  if (typeof x === 'string') return x;\n  if (typeof x?.choices?.[0]?.message?.content === 'string') return x.choices[0].message.content;\n  if (Array.isArray(x?.choices?.[0]?.message?.content)) return x.choices[0].message.content.map(p=>p.text||p.content||'').join('');\n  if (typeof x?.output_text === 'string') return x.output_text;\n  if (Array.isArray(x?.output)) return x.output.map(o=>o.content||o.text||'').join('');\n  if (x && typeof x === 'object' && x.error) throw new Error(`LLM request failed: ${JSON.stringify(x.error)}`);\n  return JSON.stringify(x);\n}\nlet text = contentOf(raw).trim().replace(/^```(?:json)?\\s*/i,'').replace(/\\s*```$/,'');\nconst first=text.indexOf('{'), last=text.lastIndexOf('}');\nif (first>=0 && last>first) text=text.slice(first,last+1);\nlet parsed;\ntry { parsed=JSON.parse(text); } catch (e) { throw new Error(`Model output was not valid JSON: ${e.message}; prefix=${text.slice(0,400)}`); }\nconst kind='specialist';\nif (kind==='specialist') {\n  if (!Array.isArray(parsed.findings) || !Array.isArray(parsed.uncertainties)) throw new Error('Specialist output lacks findings or uncertainties arrays');\n  parsed.specialist_key='programming_assessment';\n  parsed.summary=String(parsed.summary||'');\n  parsed.applicable=parsed.applicable !== false;\n  parsed.findings=parsed.findings.map((f,i)=>({\n    finding_ref:String(f.finding_ref||`PA-${String(i+1).padStart(3,'0')}`),\n    code:String(f.code||'UNSPECIFIED_FINDING').toUpperCase().replace(/[^A-Z0-9_]/g,'_').slice(0,80),\n    category:String(f.category||'other'),\n    severity:['info','minor','major','critical'].includes(f.severity)?f.severity:'minor',\n    observation:String(f.observation||''), interpretation:f.interpretation==null?null:String(f.interpretation),\n    recommendation:String(f.recommendation||''), confidence:Math.max(0,Math.min(1,Number(f.confidence??0.5))),\n    human_judgment_required:f.human_judgment_required!==false,\n    evidence:Array.isArray(f.evidence)?f.evidence:[], metadata:f.metadata&&typeof f.metadata==='object'?f.metadata:{}\n  }));\n} else if (kind==='profiler') {\n  if (!parsed.assessment_profile || !Array.isArray(parsed.optional_specialists)) throw new Error('Profiler output is invalid');\n  parsed.optional_specialists=parsed.optional_specialists.filter(x=>['programming_assessment','group_work'].includes(x));\n} else if (kind==='critic') {\n  if (!Array.isArray(parsed.finding_reviews)) parsed.finding_reviews=[];\n  if (!Array.isArray(parsed.missing_analyses)) parsed.missing_analyses=[];\n  if (!Array.isArray(parsed.systemic_risks)) parsed.systemic_risks=[];\n}\nconst usage=raw.usage||{};\nreturn [{json:{case_id:built.context.case_id,context:built.context,output:parsed,raw_response:raw,prompt_version_id:built.prompt_version_id,prompt_key:built.prompt_key,prompt_version:built.prompt_version,prompt_hash:built.prompt_hash,model:built.llm_request.model,latency_ms:Date.now()-built.started_at_ms,input_tokens:Number(usage.prompt_tokens||usage.input_tokens||0),output_tokens:Number(usage.completion_tokens||usage.output_tokens||0),n8n_execution_id:$execution.id}}];"
+      },
+      "id": "f765e679-e221-5f65-956d-151a1380223e",
+      "name": "Parse and Validate JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ins AS (\n INSERT INTO amas.agent_runs(case_id,specialist_key,prompt_version_id,model,model_provider,request_hash,request,response,parsed_output,status,latency_ms,input_tokens,output_tokens,n8n_execution_id,completed_at)\n VALUES($1::uuid,$2,$3::uuid,$4,$5,encode(digest($6::text,'sha256'),'hex'),$6::jsonb,$7::jsonb,$8::jsonb,'completed',$9,$10,$11,$12,now())\n RETURNING id\n)\nSELECT jsonb_build_object('case_id',$1,'agent_run_id',ins.id::text,'prompt_key',$2,'prompt_version',$13,'prompt_hash',$14,'model',$4,'output',$8::jsonb) AS result FROM ins;",
+        "options": {
+          "queryReplacement": "={{ [$json.case_id,$json.prompt_key,$json.prompt_version_id,$json.model,$env.LLM_PROVIDER_NAME || 'openai-compatible',JSON.stringify($('Build LLM Request').item.json.llm_request),JSON.stringify($json.raw_response),JSON.stringify($json.output),$json.latency_ms,$json.input_tokens,$json.output_tokens,$execution.id,$json.prompt_version,$json.prompt_hash] }}"
+        }
+      },
+      "id": "020564a0-0f6b-58b0-9c05-14615ddd77ab",
+      "name": "Store Agent Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1380,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "amas-postgresql-placeholder",
+          "name": "AMAS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json.result;\nconst original=$('Parse and Validate JSON').item.json;\nconst kind='specialist';\nif (kind==='specialist') return [{json:{case_id:r.case_id,specialist_key:r.prompt_key,agent_run_id:r.agent_run_id,prompt_version:r.prompt_version,prompt_hash:r.prompt_hash,model:r.model,output:r.output}}];\nif (kind==='profiler') return [{json:{case_id:r.case_id,profiler:r.output,agent_run_id:r.agent_run_id,prompt_version:r.prompt_version,prompt_hash:r.prompt_hash,model:r.model}}];\nif (kind==='critic') return [{json:{...original.context,critic:r.output,critic_run:{agent_run_id:r.agent_run_id,prompt_version:r.prompt_version,prompt_hash:r.prompt_hash,model:r.model}}}];\nreturn [{json:r}];"
+      },
+      "id": "f24fa126-adfc-55bb-878d-bc1e2d85ad79",
+      "name": "Shape Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1610,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "2305ebb7-1d49-5aa0-b50e-76930e528f4a",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1830,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "LLM Workflow Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate": {
+      "main": [
+        [
+          {
+            "node": "Load Active Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Active Prompt": {
+      "main": [
+        [
+          {
+            "node": "Build LLM Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build LLM Request": {
+      "main": [
+        [
+          {
+            "node": "Call Model Gateway",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Model Gateway": {
+      "main": [
+        [
+          {
+            "node": "Parse and Validate JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse and Validate JSON": {
+      "main": [
+        [
+          {
+            "node": "Store Agent Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Agent Run": {
+      "main": [
+        [
+          {
+            "node": "Shape Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "98da5045-edc3-5252-85f2-dea85aeac160",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

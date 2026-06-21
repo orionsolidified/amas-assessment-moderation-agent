@@ -1,0 +1,28 @@
+{
+  email admin@example.org
+}
+
+agents.orionsolidified.io {
+  encode zstd gzip
+  reverse_proxy intake-api:8080
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "same-origin"
+    -Server
+  }
+  request_body {
+    max_size 30MB
+  }
+}
+
+automation.orionsolidified.io {
+  # Put an identity-aware proxy, VPN, or mTLS control in front of this host.
+  encode zstd gzip
+  reverse_proxy n8n:5678
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    -Server
+  }
+}

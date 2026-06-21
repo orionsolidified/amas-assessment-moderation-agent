@@ -1,0 +1,16 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-evaluation-artifacts",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "evals/"},
+      "Expiration": {"Days": 30}
+    },
+    {
+      "ID": "abort-incomplete-multipart-uploads",
+      "Status": "Enabled",
+      "Filter": {"Prefix": ""},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}
+    }
+  ]
+}

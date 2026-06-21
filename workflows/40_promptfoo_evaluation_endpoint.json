@@ -1,0 +1,148 @@
+{
+  "name": "AMAS 40 - Promptfoo Evaluation Endpoint",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "amas/eval/moderate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "0ea7be0d-cfcc-5f10-be71-37f9916625f3",
+      "name": "Evaluation Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const headers = $json.headers || {};\nconst auth = String(headers.authorization || headers.Authorization || '');\nconst bearer = auth.replace(/^Bearer\\s+/i, '');\nconst received = String(headers['x-amas-eval-token'] || bearer || '');\nconst expected = String($env.AMAS_EVAL_TOKEN || '');\nif (!expected) throw new Error('AMAS_EVAL_TOKEN is not configured');\nif (received.length !== expected.length) throw new Error('Unauthorized');\nlet diff = 0;\nfor (let i = 0; i < expected.length; i++) diff |= received.charCodeAt(i) ^ expected.charCodeAt(i);\nif (diff !== 0) throw new Error('Unauthorized');\nconst body = $json.body ?? $json;\n\nlet payload=body.case_payload??body.prompt??body;\nif(typeof payload==='string'){try{payload=JSON.parse(payload)}catch(e){throw new Error(`Evaluation prompt must contain JSON: ${e.message}`)}}\nfunction uuidv4(){return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0,v=c==='x'?r:(r&3|8);return v.toString(16)})}\npayload.case_id=payload.case_id||uuidv4();payload.idempotency_key=payload.idempotency_key||`eval-${payload.case_id}`;payload.evaluation_mode=true;payload.tenant_id=payload.tenant_id||'evaluation';return [{json:payload}];"
+      },
+      "id": "6ee09507-29a5-5e1b-af06-93878640eda7",
+      "name": "Authenticate and Parse Case",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        250,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL.replace(/\\/$/, '') + '/webhook/amas/v1/cases' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 600000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-AMAS-API-Token",
+              "value": "={{ $env.AMAS_API_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "36a9ebc0-e9cd-53b4-9117-e5c56b49ed90",
+      "name": "Invoke Case Intake",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response=$json;const report=response.report||response;return [{json:{output:JSON.stringify(report),metadata:{case_id:response.case_id,report_id:response.report_id,report_version:response.report_version,workflow_version:$env.AMAS_WORKFLOW_VERSION}}}];"
+      },
+      "id": "200991ac-e181-59bb-b533-eb78f882e7f7",
+      "name": "Shape Promptfoo Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        790,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "f49e0403-4ffa-5a1e-8806-acb39f8e13ed",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1030,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Evaluation Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate and Parse Case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate and Parse Case": {
+      "main": [
+        [
+          {
+            "node": "Invoke Case Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invoke Case Intake": {
+      "main": [
+        [
+          {
+            "node": "Shape Promptfoo Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape Promptfoo Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "db4b6aa4-c837-5813-9aeb-8ea982f319bc",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

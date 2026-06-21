@@ -1,0 +1,221 @@
+{
+  "name": "AMAS 90 - Authoritative Knowledge Ingestion",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "amas/internal/knowledge/ingest",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1a60ea00-7baa-5e32-a393-05c1dd750aee",
+      "name": "Knowledge Ingestion Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const headers = $json.headers || {};\nconst auth = String(headers.authorization || headers.Authorization || '');\nconst bearer = auth.replace(/^Bearer\\s+/i, '');\nconst received = String(headers['x-amas-internal-token'] || bearer || '');\nconst expected = String($env.AMAS_INTERNAL_TOKEN || '');\nif (!expected) throw new Error('AMAS_INTERNAL_TOKEN is not configured');\nif (received.length !== expected.length) throw new Error('Unauthorized');\nlet diff = 0;\nfor (let i = 0; i < expected.length; i++) diff |= received.charCodeAt(i) ^ expected.charCodeAt(i);\nif (diff !== 0) throw new Error('Unauthorized');\nconst body = $json.body ?? $json;\n\nfor(const f of ['source_id','title','version','authority_rank','authority_scope','sha256','text'])if(body[f]===undefined||body[f]===null||body[f]==='')throw new Error(`Missing ${f}`);\nbody.status=body.status||'active';body.metadata={...(body.metadata||{}),source_id:body.source_id,title:body.title,version:body.version,authority_rank:Number(body.authority_rank),authority_scope:body.authority_scope,status:body.status,locator:body.locator||'whole document'};return [{json:body}];"
+      },
+      "id": "94fa1397-16c4-5830-81b9-88f6c7691a20",
+      "name": "Authenticate and Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        230,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ANYTHINGLLM_BASE_URL.replace(/\\/$/, '') + '/api/v1/document/raw-text' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({textContent:$json.text,metadata:$json.metadata}) }}",
+        "options": {
+          "timeout": 180000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "e2d53b1b-4f79-50b3-8118-1faa5f1886dd",
+      "name": "Upload Raw Text to AnythingLLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "amas-anythingllm-api-placeholder",
+          "name": "AMAS AnythingLLM API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Authenticate and Validate').item.json;const raw=$json;const location=raw.location||raw.document?.location||raw.documents?.[0]?.location||raw.filename||raw.document?.filename;if(!location)throw new Error(`AnythingLLM upload response did not contain a document location: ${JSON.stringify(raw).slice(0,600)}`);return [{json:{...original,anythingllm_doc_location:location,upload_response:raw}}];"
+      },
+      "id": "c64ba8f9-082d-5f21-93b6-1b518bd1289a",
+      "name": "Extract Document Location",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        750,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ANYTHINGLLM_BASE_URL.replace(/\\/$/, '') + '/api/v1/workspace/' + encodeURIComponent($env.ANYTHINGLLM_WORKSPACE_SLUG) + '/update-embeddings' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({adds:[$json.anythingllm_doc_location],deletes:[]}) }}",
+        "options": {
+          "timeout": 300000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "5a8499f6-20ea-5bc8-80c7-64a049314779",
+      "name": "Attach Document to Workspace",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "amas-anythingllm-api-placeholder",
+          "name": "AMAS AnythingLLM API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO amas.policy_sources(source_id,title,version,authority_rank,authority_scope,status,effective_from,effective_to,anythingllm_doc_location,storage_bucket,storage_key,sha256,metadata)\nVALUES($1,$2,$3,$4,$5,$6,NULLIF($7,'')::date,NULLIF($8,'')::date,$9,NULLIF($10,''),NULLIF($11,''),$12,$13::jsonb)\nON CONFLICT(source_id,version) DO UPDATE SET title=EXCLUDED.title,authority_rank=EXCLUDED.authority_rank,authority_scope=EXCLUDED.authority_scope,status=EXCLUDED.status,effective_from=EXCLUDED.effective_from,effective_to=EXCLUDED.effective_to,anythingllm_doc_location=EXCLUDED.anythingllm_doc_location,storage_bucket=EXCLUDED.storage_bucket,storage_key=EXCLUDED.storage_key,sha256=EXCLUDED.sha256,metadata=EXCLUDED.metadata\nRETURNING jsonb_build_object('source_id',source_id,'version',version,'anythingllm_doc_location',anythingllm_doc_location,'status',status) AS output;",
+        "options": {
+          "queryReplacement": "={{ [$('Extract Document Location').item.json.source_id,$('Extract Document Location').item.json.title,$('Extract Document Location').item.json.version,$('Extract Document Location').item.json.authority_rank,$('Extract Document Location').item.json.authority_scope,$('Extract Document Location').item.json.status,$('Extract Document Location').item.json.effective_from || '',$('Extract Document Location').item.json.effective_to || '',$('Extract Document Location').item.json.anythingllm_doc_location,$('Extract Document Location').item.json.storage_bucket || '',$('Extract Document Location').item.json.storage_key || '',$('Extract Document Location').item.json.sha256,JSON.stringify($('Extract Document Location').item.json.metadata)] }}"
+        }
+      },
+      "id": "04c476cf-d771-5c4e-99ac-3d661d27c008",
+      "name": "Store Policy Metadata",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "amas-postgresql-placeholder",
+          "name": "AMAS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.output }}",
+        "options": {}
+      },
+      "id": "868a7351-f0b2-5ed5-9287-94786b7933ea",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1500,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Knowledge Ingestion Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate and Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate and Validate": {
+      "main": [
+        [
+          {
+            "node": "Upload Raw Text to AnythingLLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Raw Text to AnythingLLM": {
+      "main": [
+        [
+          {
+            "node": "Extract Document Location",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Document Location": {
+      "main": [
+        [
+          {
+            "node": "Attach Document to Workspace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Document to Workspace": {
+      "main": [
+        [
+          {
+            "node": "Store Policy Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Policy Metadata": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "12f410ac-93f1-51f2-90c5-16c24831279a",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

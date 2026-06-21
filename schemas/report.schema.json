@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orionsolidified.io/schemas/amas/report.schema.json",
+  "title": "AMAS Moderation Report",
+  "type": "object",
+  "required": ["schema_version", "case_id", "recommended_disposition", "executive_summary", "assessment_profile", "scorecard", "findings", "uncertainties", "policy_conflicts", "ai_use_design", "provenance"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "case_id": {"type": "string", "format": "uuid"},
+    "recommended_disposition": {
+      "enum": ["ready_for_human_approval", "minor_revision", "major_revision", "insufficient_evidence", "policy_conflict_requires_review", "blocked_security"]
+    },
+    "executive_summary": {"type": "string"},
+    "assessment_profile": {"type": "object", "additionalProperties": true},
+    "scorecard": {
+      "type": "object",
+      "required": ["outcome_alignment", "rubric_quality", "assessment_validity", "ai_use_design", "policy_compliance"],
+      "additionalProperties": {
+        "type": "object",
+        "required": ["rating", "confidence"],
+        "properties": {
+          "rating": {"type": "integer", "minimum": 0, "maximum": 4},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "note": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "findings": {"type": "array", "items": {"$ref": "specialist-output.schema.json#/$defs/finding"}},
+    "uncertainties": {"type": "array", "items": {"type": "object"}},
+    "policy_conflicts": {"type": "array", "items": {"type": "object"}},
+    "alignment_matrix": {"type": "array", "items": {"type": "object"}},
+    "ai_use_design": {
+      "type": "object",
+      "required": ["recommended_mode", "permitted", "prohibited", "required_evidence"],
+      "properties": {
+        "recommended_mode": {"enum": ["closed", "guided", "open", "undetermined"]},
+        "permitted": {"type": "array", "items": {"type": "string"}},
+        "prohibited": {"type": "array", "items": {"type": "string"}},
+        "required_evidence": {"type": "array", "items": {"type": "string"}},
+        "student_declaration": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "required_human_decisions": {"type": "array", "items": {"type": "string"}},
+    "provenance": {
+      "type": "object",
+      "required": ["workflow_version", "prompt_manifest", "corpus_version", "model_manifest", "input_hashes"],
+      "properties": {
+        "workflow_version": {"type": "string"},
+        "prompt_manifest": {"type": "object"},
+        "corpus_version": {"type": ["string", "null"]},
+        "model_manifest": {"type": "object"},
+        "n8n_execution_id": {"type": ["string", "null"]},
+        "input_hashes": {"type": "object"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

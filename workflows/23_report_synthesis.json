@@ -1,0 +1,339 @@
+{
+  "name": "AMAS 23 - Canonical Report Synthesis",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "amas/internal/synthesize",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "bf2dc43c-a32a-540d-847e-46733cf8acda",
+      "name": "Synthesis Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const headers = $json.headers || {};\nconst auth = String(headers.authorization || headers.Authorization || '');\nconst bearer = auth.replace(/^Bearer\\s+/i, '');\nconst received = String(headers['x-amas-internal-token'] || bearer || '');\nconst expected = String($env.AMAS_INTERNAL_TOKEN || '');\nif (!expected) throw new Error('AMAS_INTERNAL_TOKEN is not configured');\nif (received.length !== expected.length) throw new Error('Unauthorized');\nlet diff = 0;\nfor (let i = 0; i < expected.length; i++) diff |= received.charCodeAt(i) ^ expected.charCodeAt(i);\nif (diff !== 0) throw new Error('Unauthorized');\nconst body = $json.body ?? $json;\n\nreturn [{ json: body }];"
+      },
+      "id": "c63f16ee-20e5-565f-b8e0-363da5f44940",
+      "name": "Authenticate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id::text AS prompt_version_id,prompt_key,version,system_prompt,user_template,output_schema,model_config,content_sha256,$2::jsonb AS context FROM amas.prompt_versions WHERE prompt_key=$1 AND active=TRUE LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ ['report_synthesis',JSON.stringify($json)] }}"
+        }
+      },
+      "id": "65eb25c1-4b4d-5007-b233-9363560f9de0",
+      "name": "Load Synthesis Prompt",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        420,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "amas-postgresql-placeholder",
+          "name": "AMAS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx=$json.context||{}; const S=v=>JSON.stringify(v??{},null,2);\nlet user=String($json.user_template||'');\nconst map={'{{CASE_BUNDLE_JSON}}':S(ctx.case_bundle),'{{PREFLIGHT_JSON}}':S(ctx.preflight),'{{POLICY_JSON}}':S(ctx.policy_evidence),'{{VERIFIED_FINDINGS_JSON}}':S(ctx.verified_findings),'{{CRITIC_JSON}}':S(ctx.critic),'{{PROVENANCE_JSON}}':S(ctx.provenance_seed)};\nfor(const [k,v] of Object.entries(map)) user=user.split(k).join(v);\nconst system=`${$json.system_prompt}\\n\\nOUTPUT CONTRACT:\\n${S($json.output_schema)}\\nReturn only JSON. The final workflow deterministically recalculates disposition and canonical findings.`;\nconst cfg=$json.model_config||{};\nreturn [{json:{context:ctx,prompt_version_id:$json.prompt_version_id,prompt_version:$json.version,prompt_hash:$json.content_sha256,started_at_ms:Date.now(),llm_request:{model:$env.LLM_PRIMARY_MODEL,messages:[{role:'system',content:system},{role:'user',content:user}],temperature:Number(cfg.temperature??0),max_tokens:Number(cfg.max_tokens??7000),response_format:{type:'json_object'}}}}];"
+      },
+      "id": "f5df9a7a-c9cf-5e98-a8f9-2fec3ee63fdb",
+      "name": "Build Synthesis Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LLM_BASE_URL.replace(/\\/$/, '') + '/chat/completions' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.llm_request) }}",
+        "options": {
+          "timeout": 360000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "7248d4a0-b715-5e4a-9f39-e97a4a14b6da",
+      "name": "Call Synthesis Model",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "amas-llm-api-placeholder",
+          "name": "AMAS LLM API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const built=$('Build Synthesis Request').item.json; const ctx=built.context; const raw=$json;\nlet text=typeof raw?.choices?.[0]?.message?.content==='string'?raw.choices[0].message.content:(raw.output_text||JSON.stringify(raw));\ntext=String(text).trim().replace(/^```(?:json)?\\s*/i,'').replace(/\\s*```$/,''); const a=text.indexOf('{'),b=text.lastIndexOf('}'); if(a>=0&&b>a)text=text.slice(a,b+1);\nlet draft={}; try{draft=JSON.parse(text)}catch{draft={executive_summary:'The synthesis model returned invalid JSON; the deterministic report was assembled from verified findings.'}}\nconst preflightFindings=(ctx.preflight?.findings||[]).map(f=>({...f,verification_status:'verified'}));\nlet findings=[...preflightFindings,...(ctx.verified_findings||[])];\nconst reviews=new Map((ctx.critic?.finding_reviews||[]).map(r=>[r.finding_ref,r]));\nfindings=findings.flatMap(f=>{const r=reviews.get(f.finding_ref); if(!r)return[f]; if(r.action==='reject')return[]; const x={...f,metadata:{...(f.metadata||{}),critic_action:r.action,critic_reason:r.concise_reason}}; if(r.revised_severity&&['info','minor','major','critical'].includes(r.revised_severity))x.severity=r.revised_severity;if(r.revised_recommendation)x.recommendation=r.revised_recommendation;return[x]});\nconst uniq=[];const seen=new Set();for(const f of findings){const k=`${f.code}|${f.observation}`;if(!seen.has(k)){seen.add(k);uniq.push(f)}}findings=uniq;\nconst securityBlocked=findings.some(f=>f.code==='SUSPECTED_PROMPT_INJECTION'&&f.severity==='critical');\nconst policyConflicts=findings.filter(f=>String(f.code).includes('POLICY_CONFLICT')).map(f=>({finding_ref:f.finding_ref,observation:f.observation,required_action:f.recommendation}));\nconst insufficient=findings.some(f=>['ASSESSMENT_BRIEF_MISSING','RUBRIC_MISSING','LEARNING_OUTCOMES_MISSING','ARTIFACT_TEXT_UNAVAILABLE'].includes(f.code)&&['major','critical'].includes(f.severity));\nlet disposition='ready_for_human_approval';\nif(securityBlocked)disposition='blocked_security';else if(policyConflicts.length)disposition='policy_conflict_requires_review';else if(insufficient)disposition='insufficient_evidence';else if(findings.some(f=>['major','critical'].includes(f.severity)))disposition='major_revision';else if(findings.some(f=>f.severity==='minor'))disposition='minor_revision';\nfunction ratingFor(category){const f=findings.filter(x=>x.category===category||String(x.category).includes(category));if(!f.length)return{rating:3,confidence:0.6,note:'No verified adverse finding'};if(f.some(x=>x.severity==='critical'))return{rating:1,confidence:Math.max(...f.map(x=>Number(x.confidence||0.5))),note:'Critical finding'};if(f.some(x=>x.severity==='major'))return{rating:2,confidence:Math.max(...f.map(x=>Number(x.confidence||0.5))),note:'Major revision required'};if(f.some(x=>x.severity==='minor'))return{rating:3,confidence:Math.max(...f.map(x=>Number(x.confidence||0.5))),note:'Minor revision advised'};return{rating:4,confidence:0.75,note:'No material issue verified'}}\nconst aiSpecialist=(ctx.specialist_outputs||[]).map(x=>x.output||x).find(x=>x.specialist_key==='ai_use_design');\nconst aiDraft=draft.ai_use_design||{};\nconst report={schema_version:'1.0',case_id:ctx.case_id,recommended_disposition:disposition,executive_summary:String(draft.executive_summary||ctx.critic?.critic_summary||`Moderation produced ${findings.length} verified finding(s). Human approval remains required.`),assessment_profile:draft.assessment_profile||ctx.assessment_profile||{},scorecard:{outcome_alignment:draft.scorecard?.outcome_alignment||ratingFor('outcome_alignment'),rubric_quality:draft.scorecard?.rubric_quality||ratingFor('rubric'),assessment_validity:draft.scorecard?.assessment_validity||ratingFor('assessment_validity'),ai_use_design:draft.scorecard?.ai_use_design||ratingFor('ai_use'),policy_compliance:draft.scorecard?.policy_compliance||ratingFor('policy')},findings,uncertainties:[...(draft.uncertainties||[]),...(ctx.specialist_outputs||[]).flatMap(x=>(x.output||x).uncertainties||[])],policy_conflicts:policyConflicts,alignment_matrix:draft.alignment_matrix||((ctx.specialist_outputs||[]).map(x=>x.output||x).find(x=>x.specialist_key==='outcome_alignment')?.metrics?.alignment_matrix||[]),ai_use_design:{recommended_mode:aiDraft.recommended_mode||aiSpecialist?.metrics?.recommended_mode||'undetermined',permitted:Array.isArray(aiDraft.permitted)?aiDraft.permitted:[],prohibited:Array.isArray(aiDraft.prohibited)?aiDraft.prohibited:[],required_evidence:Array.isArray(aiDraft.required_evidence)?aiDraft.required_evidence:[],student_declaration:aiDraft.student_declaration||null},required_human_decisions:draft.required_human_decisions||findings.filter(f=>f.human_judgment_required).map(f=>`${f.finding_ref}: ${f.recommendation}`),provenance:{workflow_version:$env.AMAS_WORKFLOW_VERSION||'unknown',prompt_manifest:{report_synthesis:{version:built.prompt_version,hash:built.prompt_hash},specialists:Object.fromEntries((ctx.specialist_outputs||[]).map(x=>[x.specialist_key,{version:x.prompt_version,hash:x.prompt_hash}]))},corpus_version:$env.AMAS_CORPUS_VERSION||null,model_manifest:{primary:$env.LLM_PRIMARY_MODEL,critic:$env.LLM_CRITIC_MODEL,provider:$env.LLM_PROVIDER_NAME||'openai-compatible'},n8n_execution_id:$execution.id,input_hashes:ctx.provenance_seed?.input_hashes||{}}};\nreturn [{json:{case_id:ctx.case_id,report,prompt_version_id:built.prompt_version_id,prompt_version:built.prompt_version,prompt_hash:built.prompt_hash,model:built.llm_request.model,raw_response:raw,llm_request:built.llm_request,latency_ms:Date.now()-built.started_at_ms}}];"
+      },
+      "id": "4ffd091a-46fd-58b9-8924-53a70f2b57a5",
+      "name": "Finalize Canonical Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH lock_case AS MATERIALIZED (\n SELECT pg_advisory_xact_lock(hashtextextended($1::text,0)) AS locked\n), agent AS (\n INSERT INTO amas.agent_runs(case_id,specialist_key,prompt_version_id,model,model_provider,request_hash,request,response,parsed_output,status,latency_ms,n8n_execution_id,completed_at)\n VALUES($1::uuid,'report_synthesis',$2::uuid,$3,$4,encode(digest($5::text,'sha256'),'hex'),$5::jsonb,$6::jsonb,$7::jsonb,'completed',$8,$9,now()) RETURNING id\n), report_ins AS (\n INSERT INTO amas.reports(case_id,report_version,schema_version,disposition,report,report_sha256,workflow_version,prompt_manifest,corpus_version,model_manifest,status)\n SELECT $1::uuid,amas.next_report_version($1::uuid),'1.0',($7::jsonb->>'recommended_disposition')::amas.report_disposition,$7::jsonb,\n   encode(digest($7::text,'sha256'),'hex'),$7::jsonb#>>'{provenance,workflow_version}',COALESCE($7::jsonb#>'{provenance,prompt_manifest}','{}'::jsonb),\n   $7::jsonb#>>'{provenance,corpus_version}',COALESCE($7::jsonb#>'{provenance,model_manifest}','{}'::jsonb),'draft'\n FROM lock_case\n RETURNING id,report_version,report\n), findings_ins AS (\n INSERT INTO amas.findings(case_id,report_id,agent_run_id,finding_ref,code,category,severity,observation,interpretation,recommendation,confidence,human_judgment_required,evidence,verification_status,critic_status,metadata)\n SELECT $1::uuid,r.id,a.id,f->>'finding_ref',f->>'code',f->>'category',(f->>'severity')::amas.finding_severity,f->>'observation',NULLIF(f->>'interpretation',''),f->>'recommendation',NULLIF(f->>'confidence','')::numeric,COALESCE((f->>'human_judgment_required')::boolean,true),COALESCE(f->'evidence','[]'::jsonb),COALESCE(f->>'verification_status','verified'),f#>>'{metadata,critic_action}',COALESCE(f->'metadata','{}'::jsonb)\n FROM report_ins r CROSS JOIN agent a CROSS JOIN LATERAL jsonb_array_elements(r.report->'findings') f RETURNING id\n), upd AS (\n UPDATE amas.cases SET latest_report_id=r.id,status='awaiting_review' FROM report_ins r WHERE amas.cases.id=$1::uuid RETURNING amas.cases.id\n), audit AS (\n SELECT amas.append_audit($1::uuid,'system','report_synthesis','report_created','report',r.id::text,jsonb_build_object('version',r.report_version,'disposition',r.report->>'recommended_disposition'),NULL,$9) FROM report_ins r\n)\nSELECT jsonb_build_object('case_id',$1,'report_id',r.id::text,'report_version',r.report_version,'report',r.report,'status','awaiting_review') AS output FROM report_ins r;",
+        "options": {
+          "queryReplacement": "={{ [$json.case_id,$json.prompt_version_id,$json.model,$env.LLM_PROVIDER_NAME || 'openai-compatible',JSON.stringify($json.llm_request),JSON.stringify($json.raw_response),JSON.stringify($json.report),$json.latency_ms,$execution.id] }}"
+        }
+      },
+      "id": "c5b94065-70e4-5233-905d-c978c7bb2160",
+      "name": "Store Report and Findings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1390,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "amas-postgresql-placeholder",
+          "name": "AMAS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AMAS_INTAKE_INTERNAL_URL.replace(/\\/$/, '') + '/internal/reports' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({case_id:$json.output.case_id,report_id:$json.output.report_id,report_version:$json.output.report_version,tenant_id:$('Build Synthesis Request').item.json.context.case_bundle?.case?.tenant_id || 'default',report:$json.output.report}) }}",
+        "options": {
+          "timeout": 120000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-AMAS-Internal-Token",
+              "value": "={{ $env.AMAS_INTERNAL_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "c06ec603-9840-5ffe-a32b-52fac0ec2537",
+      "name": "Archive Report Object",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1630,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const stored=$('Store Report and Findings').item.json.output;\nconst response=$json||{};\nconst archiveOk=!response.error && Boolean(response.storage_bucket) && Boolean(response.storage_key) && Boolean(response.sha256);\nconst warning=archiveOk?null:{code:'REPORT_OBJECT_ARCHIVE_FAILED',message:String(response.error?.message||response.message||'The canonical report remains stored in PostgreSQL, but its object-storage archive was not created.')};\nreturn [{json:{report_id:stored.report_id,storage_bucket:archiveOk?response.storage_bucket:'',storage_key:archiveOk?response.storage_key:'',sha256:archiveOk?response.sha256:'',archive_ok:archiveOk,warning,stored_output:stored}}];"
+      },
+      "id": "a8675b70-4c7a-56c3-bdb0-d668075a0b84",
+      "name": "Normalize Archive Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1850,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH upd AS (\n UPDATE amas.reports\n SET storage_bucket=NULLIF($2,''), storage_key=NULLIF($3,'')\n WHERE id=$1::uuid AND NULLIF($2,'') IS NOT NULL AND NULLIF($3,'') IS NOT NULL\n RETURNING id\n)\nSELECT (\n  $4::jsonb\n  || CASE WHEN $6::boolean\n       THEN jsonb_build_object('storage',jsonb_build_object('bucket',$2,'key',$3,'sha256',$5,'archived',true))\n       ELSE jsonb_build_object('storage',jsonb_build_object('archived',false),'warnings',jsonb_build_array($7::jsonb))\n     END\n) AS output;",
+        "options": {
+          "queryReplacement": "={{ [$json.report_id,$json.storage_bucket,$json.storage_key,JSON.stringify($json.stored_output),$json.sha256,$json.archive_ok,JSON.stringify($json.warning || {code:'REPORT_OBJECT_ARCHIVE_FAILED'})] }}"
+        }
+      },
+      "id": "97e9314b-4932-58aa-8c61-ccf8ea474033",
+      "name": "Record Report Object",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2080,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "amas-postgresql-placeholder",
+          "name": "AMAS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.output }}",
+        "options": {}
+      },
+      "id": "117fbe5f-efbd-5767-97c6-0675ea8dfb45",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2320,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Synthesis Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate": {
+      "main": [
+        [
+          {
+            "node": "Load Synthesis Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Synthesis Prompt": {
+      "main": [
+        [
+          {
+            "node": "Build Synthesis Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Synthesis Request": {
+      "main": [
+        [
+          {
+            "node": "Call Synthesis Model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Synthesis Model": {
+      "main": [
+        [
+          {
+            "node": "Finalize Canonical Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Canonical Report": {
+      "main": [
+        [
+          {
+            "node": "Store Report and Findings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Report and Findings": {
+      "main": [
+        [
+          {
+            "node": "Archive Report Object",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Archive Report Object": {
+      "main": [
+        [
+          {
+            "node": "Normalize Archive Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Archive Result": {
+      "main": [
+        [
+          {
+            "node": "Record Report Object",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Report Object": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "ec46a524-5dc2-5586-a208-7b023b9e12c3",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

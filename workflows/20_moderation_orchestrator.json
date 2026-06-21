@@ -1,0 +1,453 @@
+{
+  "name": "AMAS 20 - Moderation Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "amas/internal/orchestrate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "942af200-6ff4-598a-9281-e34583ed01e0",
+      "name": "Orchestrator Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const headers = $json.headers || {};\nconst auth = String(headers.authorization || headers.Authorization || '');\nconst bearer = auth.replace(/^Bearer\\s+/i, '');\nconst received = String(headers['x-amas-internal-token'] || bearer || '');\nconst expected = String($env.AMAS_INTERNAL_TOKEN || '');\nif (!expected) throw new Error('AMAS_INTERNAL_TOKEN is not configured');\nif (received.length !== expected.length) throw new Error('Unauthorized');\nlet diff = 0;\nfor (let i = 0; i < expected.length; i++) diff |= received.charCodeAt(i) ^ expected.charCodeAt(i);\nif (diff !== 0) throw new Error('Unauthorized');\nconst body = $json.body ?? $json;\n\nreturn [{ json: body }];"
+      },
+      "id": "cf31bed5-a974-5b21-9a32-f3703fdcdc27",
+      "name": "Authenticate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        190,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH upd AS (UPDATE amas.cases SET status='analysing' WHERE id=$1::uuid RETURNING id)\nSELECT $1::text AS case_id, amas.case_bundle($1::uuid) AS case_bundle FROM upd;",
+        "options": {
+          "queryReplacement": "={{ [$json.case_id] }}"
+        }
+      },
+      "id": "570b9395-6dd8-5416-a0e6-b9ab10aa5aa8",
+      "name": "Load Case and Mark Analysing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        410,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "amas-postgresql-placeholder",
+          "name": "AMAS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL.replace(/\\/$/, '') + '/webhook/amas/internal/preflight' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({case_id:$json.case_id}) }}",
+        "options": {
+          "timeout": 180000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-AMAS-Internal-Token",
+              "value": "={{ $env.AMAS_INTERNAL_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "d2006c52-1190-5c8f-8ead-dbc0f9924cee",
+      "name": "Run Preflight",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        640,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL.replace(/\\/$/, '') + '/webhook/amas/internal/policy-retrieval' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({case_id:$('Load Case and Mark Analysing').first().json.case_id,case_bundle:$('Load Case and Mark Analysing').first().json.case_bundle}) }}",
+        "options": {
+          "timeout": 180000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-AMAS-Internal-Token",
+              "value": "={{ $env.AMAS_INTERNAL_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "7ea945f6-62b7-5bf7-87ea-9eb2c40000dd",
+      "name": "Retrieve Policy Evidence",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL.replace(/\\/$/, '') + '/webhook/amas/internal/profile' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({case_id:$('Load Case and Mark Analysing').first().json.case_id,case_bundle:$('Load Case and Mark Analysing').first().json.case_bundle,preflight:$('Run Preflight').first().json}) }}",
+        "options": {
+          "timeout": 240000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-AMAS-Internal-Token",
+              "value": "={{ $env.AMAS_INTERNAL_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "b3adb80a-c14c-52bb-b92e-b2e1a0253eeb",
+      "name": "Profile and Route",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const caseId=$('Load Case and Mark Analysing').first().json.case_id;\nconst bundle=$('Load Case and Mark Analysing').first().json.case_bundle;\nconst preflight=$('Run Preflight').first().json;\nconst policy=$('Retrieve Policy Evidence').first().json;\nconst profiler=$('Profile and Route').first().json.profiler||{};\nconst mandatory=['outcome_alignment','rubric_quality','assessment_validity','ai_use_design','policy_accessibility'];\nconst optional=Array.isArray(profiler.optional_specialists)?profiler.optional_specialists:[];\nconst selected=[...new Set([...mandatory,...optional])];\nconst pathMap={outcome_alignment:'outcome-alignment',rubric_quality:'rubric-quality',assessment_validity:'assessment-validity',ai_use_design:'ai-use-design',policy_accessibility:'policy-accessibility',programming_assessment:'programming-assessment',group_work:'group-work'};\nconst sourceBundle=JSON.parse(JSON.stringify(bundle));\nconst singletonTypes=new Set(['assessment_brief','rubric','module_descriptor','programme_specification']);\nsourceBundle.artifacts=(sourceBundle.artifacts||[]).map(a=>{\n  const base=`CASE-${String(a.artifact_type).toUpperCase()}`;\n  const suffix=String(a.id||a.sha256||'').replace(/[^A-Za-z0-9]/g,'').slice(0,12).toUpperCase();\n  return {...a,source_id:singletonTypes.has(a.artifact_type)?base:`${base}-${suffix||'UNKNOWN'}`};\n});\nconst provenanceSeed={workflow_version:$env.AMAS_WORKFLOW_VERSION||'unknown',corpus_version:$env.AMAS_CORPUS_VERSION||null,n8n_execution_id:$execution.id,input_hashes:Object.fromEntries((bundle.artifacts||[]).map(a=>[a.artifact_type,a.sha256||a.text_sha256||null]))};\nreturn selected.map(s=>({json:{case_id:caseId,specialist_key:s,url:`${$env.N8N_INTERNAL_BASE_URL.replace(/\\/$/,'')}/webhook/amas/internal/specialist/${pathMap[s]}`,payload:{case_id:caseId,case_bundle:sourceBundle,preflight,policy_evidence:policy,assessment_profile:profiler.assessment_profile||{},provenance_seed:provenanceSeed}}}));"
+      },
+      "id": "d70a534b-4625-52e6-acf8-e8ff40dc3d0b",
+      "name": "Build Specialist Calls",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 300000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-AMAS-Internal-Token",
+              "value": "={{ $env.AMAS_INTERNAL_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "730da50e-7e2a-51e2-807d-eb906ff01125",
+      "name": "Dispatch Selected Specialists",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const calls=$('Build Specialist Calls').all().map(i=>i.json);\nconst responses=$input.all();\nconst specialistOutputs=[];\nfor (let i=0;i<calls.length;i++) {\n  const response=responses[i]?.json||{};\n  if (response.error) specialistOutputs.push({case_id:calls[i].case_id,specialist_key:calls[i].specialist_key,error:response.error,output:{specialist_key:calls[i].specialist_key,applicable:true,summary:'Specialist execution failed',findings:[],uncertainties:[{question:'Specialist execution failed',impact:'Manual review is required',required_information:String(response.error.message||response.error)}],metrics:{}}});\n  else specialistOutputs.push(response);\n}\nconst first=calls[0]?.payload||{};\nreturn [{json:{...first,specialist_outputs:specialistOutputs}}];"
+      },
+      "id": "4af5ec20-3f58-5b38-ba5d-cfcdf63f526a",
+      "name": "Collect Specialist Outputs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL.replace(/\\/$/, '') + '/webhook/amas/internal/evidence-verifier' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 180000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-AMAS-Internal-Token",
+              "value": "={{ $env.AMAS_INTERNAL_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "c752b7ff-b964-589d-8b77-542092e33343",
+      "name": "Verify Evidence",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2080,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL.replace(/\\/$/, '') + '/webhook/amas/internal/critic' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 300000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-AMAS-Internal-Token",
+              "value": "={{ $env.AMAS_INTERNAL_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "489ef1d5-6700-55e3-96a0-0fa9f419703b",
+      "name": "Run Adversarial Critic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL.replace(/\\/$/, '') + '/webhook/amas/internal/synthesize' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 360000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-AMAS-Internal-Token",
+              "value": "={{ $env.AMAS_INTERNAL_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "340aba7c-a4bc-5dcd-91f5-dddf712c36d9",
+      "name": "Synthesize and Store Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "b1ce5831-9200-5b04-b4f0-3e472d61709e",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2800,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Orchestrator Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate": {
+      "main": [
+        [
+          {
+            "node": "Load Case and Mark Analysing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Case and Mark Analysing": {
+      "main": [
+        [
+          {
+            "node": "Run Preflight",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Preflight": {
+      "main": [
+        [
+          {
+            "node": "Retrieve Policy Evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retrieve Policy Evidence": {
+      "main": [
+        [
+          {
+            "node": "Profile and Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profile and Route": {
+      "main": [
+        [
+          {
+            "node": "Build Specialist Calls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Specialist Calls": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Selected Specialists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Selected Specialists": {
+      "main": [
+        [
+          {
+            "node": "Collect Specialist Outputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Specialist Outputs": {
+      "main": [
+        [
+          {
+            "node": "Verify Evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Evidence": {
+      "main": [
+        [
+          {
+            "node": "Run Adversarial Critic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Adversarial Critic": {
+      "main": [
+        [
+          {
+            "node": "Synthesize and Store Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Synthesize and Store Report": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "97461cc4-fa3f-5646-83e9-4cdcdd8ffd03",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

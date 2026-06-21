@@ -1,0 +1,158 @@
+{
+  "name": "AMAS 01 - Case Intake",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "amas/v1/cases",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "96931ace-5d75-51b8-af60-af28589f65d9",
+      "name": "Case Intake Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const headers = $json.headers || {};\nconst received = String(headers['x-amas-api-token'] || headers['X-AMAS-API-Token'] || '');\nconst expected = String($env.AMAS_API_TOKEN || '');\nif (!expected) throw new Error('AMAS_API_TOKEN is not configured');\nif (received.length !== expected.length) throw new Error('Unauthorized');\nlet diff = 0;\nfor (let i = 0; i < expected.length; i++) diff |= received.charCodeAt(i) ^ expected.charCodeAt(i);\nif (diff !== 0) throw new Error('Unauthorized');\nconst body = $json.body ?? $json;\n\nconst allowedArtifacts = new Set(['assessment_brief','rubric','module_descriptor','programme_specification','policy','supporting_document']);\nconst required = ['case_id','title','module_code','assessment_type','learning_outcomes','artifacts'];\nfor (const field of required) {\n  if (body[field] === undefined || body[field] === null || body[field] === '') throw new Error(`Missing required field: ${field}`);\n}\nif (!/^[0-9a-fA-F-]{36}$/.test(String(body.case_id))) throw new Error('case_id must be a UUID');\nif (!Array.isArray(body.learning_outcomes) || body.learning_outcomes.length === 0) throw new Error('At least one learning outcome is required');\nif (!Array.isArray(body.artifacts) || body.artifacts.length < 2) throw new Error('Assessment brief and rubric are required');\nconst types = new Set(body.artifacts.map(a => a.artifact_type));\nfor (const t of types) if (!allowedArtifacts.has(t)) throw new Error(`Unsupported artifact_type: ${t}`);\nif (!types.has('assessment_brief') || !types.has('rubric')) throw new Error('assessment_brief and rubric artifacts are required');\nfor (const a of body.artifacts) {\n  if (typeof a.extracted_text !== 'string') throw new Error(`Artifact ${a.artifact_type} has no extracted_text`);\n  if (a.extracted_text.length > 2000000) throw new Error(`Artifact ${a.artifact_type} exceeds extracted-text limit`);\n}\nbody.tenant_id = body.tenant_id || 'default';\nbody.declared_ai_mode = body.declared_ai_mode || 'unspecified';\nbody.evaluation_mode = Boolean(body.evaluation_mode);\nbody.metadata = body.metadata || {};\nbody.idempotency_key = body.idempotency_key || body.case_id;\nreturn [{json: body}];"
+      },
+      "id": "05f7b222-21d0-57fa-9a8f-2489ed9fa31d",
+      "name": "Authenticate and Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH p AS (SELECT $1::jsonb AS j),\ncase_upsert AS (\n  INSERT INTO amas.cases AS existing (\n    id, external_ref, tenant_id, title, module_code, module_title, study_level,\n    credit_value, assessment_weight, assessment_type, individual_or_group,\n    formative_or_summative, issue_date, submission_date, submitter_id,\n    moderator_id, declared_ai_mode, evaluation_mode, status, metadata,\n    input_snapshot, input_sha256, idempotency_key\n  )\n  SELECT\n    (j->>'case_id')::uuid, NULLIF(j->>'external_ref',''), COALESCE(NULLIF(j->>'tenant_id',''),'default'),\n    j->>'title', j->>'module_code', NULLIF(j->>'module_title',''), NULLIF(j->>'study_level',''),\n    NULLIF(j->>'credit_value','')::numeric, NULLIF(j->>'assessment_weight','')::numeric,\n    j->>'assessment_type', NULLIF(j->>'individual_or_group',''), NULLIF(j->>'formative_or_summative',''),\n    NULLIF(j->>'issue_date','')::date, NULLIF(j->>'submission_date','')::date,\n    NULLIF(j->>'submitter_id',''), NULLIF(j->>'moderator_id',''), NULLIF(j->>'declared_ai_mode',''),\n    COALESCE((j->>'evaluation_mode')::boolean,false), 'normalised', COALESCE(j->'metadata','{}'::jsonb),\n    j - 'artifacts' - 'learning_outcomes', encode(digest(j::text,'sha256'),'hex'), NULLIF(j->>'idempotency_key','')\n  FROM p\n  ON CONFLICT (id) DO UPDATE SET\n    external_ref=EXCLUDED.external_ref, title=EXCLUDED.title, module_code=EXCLUDED.module_code,\n    module_title=EXCLUDED.module_title, study_level=EXCLUDED.study_level,\n    credit_value=EXCLUDED.credit_value, assessment_weight=EXCLUDED.assessment_weight,\n    assessment_type=EXCLUDED.assessment_type, individual_or_group=EXCLUDED.individual_or_group,\n    formative_or_summative=EXCLUDED.formative_or_summative, issue_date=EXCLUDED.issue_date,\n    submission_date=EXCLUDED.submission_date, submitter_id=EXCLUDED.submitter_id,\n    moderator_id=EXCLUDED.moderator_id, declared_ai_mode=EXCLUDED.declared_ai_mode,\n    evaluation_mode=EXCLUDED.evaluation_mode, status='normalised', metadata=EXCLUDED.metadata,\n    input_snapshot=EXCLUDED.input_snapshot,\n    input_sha256=amas.enforce_immutable_input(existing.input_sha256,EXCLUDED.input_sha256)\n  RETURNING id\n),\nartifact_upsert AS (\n  INSERT INTO amas.artifacts (\n    case_id, artifact_type, original_filename, mime_type, size_bytes, storage_bucket,\n    storage_key, sha256, extracted_text, text_sha256, extraction_status, metadata\n  )\n  SELECT c.id, (a->>'artifact_type')::amas.artifact_type, NULLIF(a->>'original_filename',''),\n    NULLIF(a->>'mime_type',''), NULLIF(a->>'size_bytes','')::bigint, NULLIF(a->>'storage_bucket',''),\n    NULLIF(a->>'storage_key',''), NULLIF(a->>'sha256',''), COALESCE(a->>'extracted_text',''),\n    NULLIF(a->>'text_sha256',''), COALESCE(NULLIF(a->>'extraction_status',''),'provided'),\n    COALESCE(a->'metadata','{}'::jsonb)\n  FROM p CROSS JOIN case_upsert c CROSS JOIN LATERAL jsonb_array_elements(p.j->'artifacts') a\n  ON CONFLICT (case_id, artifact_type, sha256) DO UPDATE SET\n    storage_bucket=EXCLUDED.storage_bucket, storage_key=EXCLUDED.storage_key,\n    extracted_text=EXCLUDED.extracted_text, text_sha256=EXCLUDED.text_sha256,\n    extraction_status=EXCLUDED.extraction_status, metadata=EXCLUDED.metadata\n  RETURNING id\n),\nlo_upsert AS (\n  INSERT INTO amas.learning_outcomes (case_id, outcome_code, description, level_descriptor, metadata)\n  SELECT c.id, lo->>'outcome_code', lo->>'description', NULLIF(lo->>'level_descriptor',''),\n    COALESCE(lo->'metadata','{}'::jsonb)\n  FROM p CROSS JOIN case_upsert c CROSS JOIN LATERAL jsonb_array_elements(p.j->'learning_outcomes') lo\n  ON CONFLICT (case_id, outcome_code) DO UPDATE SET\n    description=EXCLUDED.description, level_descriptor=EXCLUDED.level_descriptor, metadata=EXCLUDED.metadata\n  RETURNING id\n),\naudit AS (\n  SELECT amas.append_audit(c.id,'user',NULLIF(p.j->>'submitter_id',''),'case_received','case',c.id::text,\n    jsonb_build_object('evaluation_mode',COALESCE((p.j->>'evaluation_mode')::boolean,false)),\n    NULLIF(p.j->>'idempotency_key',''),$2)\n  FROM p CROSS JOIN case_upsert c\n)\nSELECT c.id::text AS case_id, amas.case_bundle(c.id) AS case_bundle\nFROM case_upsert c;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json), $execution.id] }}"
+        }
+      },
+      "id": "01630c6e-0898-5557-ad76-0659ec4e2490",
+      "name": "Persist Case",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        470,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "amas-postgresql-placeholder",
+          "name": "AMAS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL.replace(/\\/$/, '') + '/webhook/amas/internal/orchestrate' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({case_id: $json.case_id}) }}",
+        "options": {
+          "timeout": 600000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-AMAS-Internal-Token",
+              "value": "={{ $env.AMAS_INTERNAL_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "60b35429-4321-5e83-80a9-d689c9b9bca7",
+      "name": "Run Moderation Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        730,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "f5247012-5d27-5d30-9519-9a59667afc60",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        990,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Case Intake Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate and Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate and Validate": {
+      "main": [
+        [
+          {
+            "node": "Persist Case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Case": {
+      "main": [
+        [
+          {
+            "node": "Run Moderation Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Moderation Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "2313e68b-7849-519a-a302-a827d06a4efc",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

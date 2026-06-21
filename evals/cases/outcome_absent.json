@@ -1,0 +1,89 @@
+{
+  "case_id": "a10c2010-6666-4b22-8333-666666666666",
+  "external_ref": "EVAL-OUTCOME-ABSENT",
+  "tenant_id": "demo",
+  "idempotency_key": "eval-outcome-absent-v1",
+  "title": "Individual API Design Portfolio",
+  "module_code": "ICT2204",
+  "module_title": "Software Engineering",
+  "study_level": "5",
+  "credit_value": 15,
+  "assessment_weight": 30,
+  "assessment_type": "individual software portfolio",
+  "individual_or_group": "individual",
+  "formative_or_summative": "summative",
+  "issue_date": "2026-06-22",
+  "submission_date": "2026-08-03",
+  "submitter_id": "lecturer-demo",
+  "moderator_id": "moderator-demo",
+  "declared_ai_mode": "guided",
+  "evaluation_mode": false,
+  "metadata": {
+    "synthetic": true,
+    "purpose": "live workshop demonstration"
+  },
+  "learning_outcomes": [
+    {
+      "outcome_code": "LO1",
+      "description": "Design a maintainable software architecture for a stated organisational problem.",
+      "level_descriptor": "Level 5"
+    },
+    {
+      "outcome_code": "LO2",
+      "description": "Implement and test a working software system using appropriate engineering practices.",
+      "level_descriptor": "Level 5"
+    },
+    {
+      "outcome_code": "LO3",
+      "description": "Analyse security and privacy risks and implement proportionate controls.",
+      "level_descriptor": "Level 5"
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_type": "assessment_brief",
+      "original_filename": "outcome-absent-brief.md",
+      "mime_type": "text/markdown",
+      "size_bytes": 155,
+      "storage_bucket": "amas",
+      "storage_key": "demo/a9c763a6c15ba494a535006a1e7d2d6fbc6a10b72ff49165662a75616a7ab556-outcome-absent-brief.md",
+      "sha256": "a9c763a6c15ba494a535006a1e7d2d6fbc6a10b72ff49165662a75616a7ab556",
+      "extracted_text": "Individual API implementation. Weighting: 30%. Learning outcomes assessed: LO1 and LO2. Submit design and implementation. No security artefact is required.",
+      "text_sha256": "a9c763a6c15ba494a535006a1e7d2d6fbc6a10b72ff49165662a75616a7ab556",
+      "extraction_status": "provided",
+      "metadata": {
+        "synthetic": true
+      }
+    },
+    {
+      "artifact_type": "rubric",
+      "original_filename": "valid-rubric.md",
+      "mime_type": "text/markdown",
+      "size_bytes": 48,
+      "storage_bucket": "amas",
+      "storage_key": "demo/47b7fce9f9ea01e23dbfe5b0bcf3bbeda732ac2cfce397d39b25c3e0e543e505-valid-rubric.md",
+      "sha256": "47b7fce9f9ea01e23dbfe5b0bcf3bbeda732ac2cfce397d39b25c3e0e543e505",
+      "extracted_text": "Architecture: 50 marks\nImplementation: 50 marks\n",
+      "text_sha256": "47b7fce9f9ea01e23dbfe5b0bcf3bbeda732ac2cfce397d39b25c3e0e543e505",
+      "extraction_status": "provided",
+      "metadata": {
+        "synthetic": true
+      }
+    },
+    {
+      "artifact_type": "module_descriptor",
+      "original_filename": "module-descriptor.md",
+      "mime_type": "text/markdown",
+      "size_bytes": 320,
+      "storage_bucket": "amas",
+      "storage_key": "demo/4cf779b96dba62d612520d44cea3af69f3a9fffdda27e35b059db2271a95a683-module-descriptor.md",
+      "sha256": "4cf779b96dba62d612520d44cea3af69f3a9fffdda27e35b059db2271a95a683",
+      "extracted_text": "ICT2204 Module Descriptor\nAssessment weighting: 30%\nCredits: 15\n\nLO1: Design a maintainable software architecture for a stated organisational problem.\nLO2: Implement and test a working software system using appropriate engineering practices.\nLO3: Analyse security and privacy risks and implement proportionate controls.\n",
+      "text_sha256": "4cf779b96dba62d612520d44cea3af69f3a9fffdda27e35b059db2271a95a683",
+      "extraction_status": "provided",
+      "metadata": {
+        "synthetic": true
+      }
+    }
+  ]
+}

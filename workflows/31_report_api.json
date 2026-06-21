@@ -1,0 +1,117 @@
+{
+  "name": "AMAS 31 - Report API",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "amas/v1/cases/:caseId/report",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "5a50369c-abbb-5962-9ba5-dc7f4ad0db9b",
+      "name": "Report Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const headers = $json.headers || {};\nconst received = String(headers['x-amas-api-token'] || headers['X-AMAS-API-Token'] || '');\nconst expected = String($env.AMAS_API_TOKEN || '');\nif (!expected) throw new Error('AMAS_API_TOKEN is not configured');\nif (received.length !== expected.length) throw new Error('Unauthorized');\nlet diff = 0;\nfor (let i = 0; i < expected.length; i++) diff |= received.charCodeAt(i) ^ expected.charCodeAt(i);\nif (diff !== 0) throw new Error('Unauthorized');\nconst body = $json.body ?? $json;\n\nconst caseId=String(($json.params||{}).caseId||($json.path||{}).caseId||body.case_id||'');\nif(!/^[0-9a-fA-F-]{36}$/.test(caseId))throw new Error('Invalid case id');return [{json:{case_id:caseId}}];"
+      },
+      "id": "9e6b4991-3674-55b7-a31d-286d4a5f6e85",
+      "name": "Authenticate and Parse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT jsonb_build_object(\n  'case_id',c.id::text,\n  'status',c.status,\n  'report_id',r.id::text,\n  'report_version',r.report_version,\n  'report',r.report,\n  'storage',CASE WHEN r.storage_key IS NULL THEN jsonb_build_object('archived',false) ELSE jsonb_build_object('archived',true,'bucket',r.storage_bucket,'key',r.storage_key) END,\n  'created_at',r.created_at\n) AS output\nFROM amas.cases c LEFT JOIN amas.reports r ON r.id=c.latest_report_id WHERE c.id=$1::uuid;",
+        "options": {
+          "queryReplacement": "={{ [$json.case_id] }}"
+        }
+      },
+      "id": "ae7bb638-8f16-58ac-85c4-e971902362c8",
+      "name": "Load Latest Report",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        470,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "amas-postgresql-placeholder",
+          "name": "AMAS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.output || {error:'case_not_found'} }}",
+        "options": {}
+      },
+      "id": "04897d51-5eef-5203-975f-c586a5ab6036",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        720,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Report Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate and Parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate and Parse": {
+      "main": [
+        [
+          {
+            "node": "Load Latest Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Latest Report": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "f46f0ea6-5aae-5b6c-b0bf-50131b5608b6",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

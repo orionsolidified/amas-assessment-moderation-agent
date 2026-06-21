@@ -1,0 +1,216 @@
+{
+  "name": "AMAS 03 - AnythingLLM Policy Retrieval",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "amas/internal/policy-retrieval",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "9d2e2beb-6dcb-59b2-8878-083f19862cb5",
+      "name": "Policy Retrieval Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const headers = $json.headers || {};\nconst auth = String(headers.authorization || headers.Authorization || '');\nconst bearer = auth.replace(/^Bearer\\s+/i, '');\nconst received = String(headers['x-amas-internal-token'] || bearer || '');\nconst expected = String($env.AMAS_INTERNAL_TOKEN || '');\nif (!expected) throw new Error('AMAS_INTERNAL_TOKEN is not configured');\nif (received.length !== expected.length) throw new Error('Unauthorized');\nlet diff = 0;\nfor (let i = 0; i < expected.length; i++) diff |= received.charCodeAt(i) ^ expected.charCodeAt(i);\nif (diff !== 0) throw new Error('Unauthorized');\nconst body = $json.body ?? $json;\n\nconst caseId = body.case_id;\nconst bundle = body.case_bundle || {};\nconst c = bundle.case || {};\nconst defaultQueries = [\n  `assessment moderation requirements ${c.assessment_type || ''}`,\n  `learning outcome alignment rubric assessment level ${c.study_level || ''}`,\n  `generative AI permitted prohibited disclosure assessment`,\n  `group assessment individual contribution moderation`,\n  `assessment accessibility equity reasonable adjustment`\n];\nconst queries = Array.isArray(body.queries) && body.queries.length ? body.queries : defaultQueries;\nreturn queries.slice(0,10).map((q,index)=>({json:{case_id:caseId,case_bundle:bundle,query:String(q),query_index:index,top_n:Number(body.top_n||8),score_threshold:Number(body.score_threshold||0.2)}}));"
+      },
+      "id": "830a4e57-ff84-508d-9aeb-a9b4fde32ce2",
+      "name": "Build Retrieval Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ANYTHINGLLM_BASE_URL.replace(/\\/$/, '') + '/api/v1/workspace/' + encodeURIComponent($env.ANYTHINGLLM_WORKSPACE_SLUG) + '/vector-search' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({query:$json.query,topN:$json.top_n,scoreThreshold:$json.score_threshold}) }}",
+        "options": {
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "2a2abb17-17eb-5c25-a522-cede1a2f22a7",
+      "name": "AnythingLLM Vector Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "amas-anythingllm-api-placeholder",
+          "name": "AMAS AnythingLLM API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const responses = $input.all();\nconst requests = $('Build Retrieval Queries').all().map(i=>i.json);\nconst chunks = [];\nconst records = [];\nfor (let i=0;i<responses.length;i++) {\n  const req = requests[i] || {};\n  const raw = responses[i]?.json || {};\n  const list = Array.isArray(raw.result) ? raw.result : Array.isArray(raw.results) ? raw.results : Array.isArray(raw.documents) ? raw.documents : [];\n  const accepted=[];\n  for (const hit of list) {\n    const md = typeof hit.metadata === 'string' ? (()=>{try{return JSON.parse(hit.metadata)}catch{return {}}})() : (hit.metadata || {});\n    const score = Number(hit.score ?? (hit.distance != null ? 1-Number(hit.distance) : 0));\n    const sourceId = String(md.source_id || md.sourceId || md.title || md.sourceDocument || hit.source_id || hit.id || 'UNKNOWN');\n    const chunkId = String(hit.chunk_id || hit.id || md.id || `${sourceId}-${accepted.length+1}`);\n    const item={source_type:'policy',source_id:sourceId,chunk_id:chunkId,locator:String(md.locator || md.section || md.title || 'retrieved passage'),excerpt:String(hit.text || hit.content || '').slice(0,6000),score,authority_rank:Number(md.authority_rank || 0),version:String(md.version || ''),status:String(md.status || 'active'),metadata:md};\n    if (score >= Number(req.score_threshold || 0.2)) {accepted.push(item); chunks.push(item);}\n  }\n  records.push({query:req.query,request:{topN:req.top_n,scoreThreshold:req.score_threshold},response:raw,accepted_chunks:accepted});\n}\nconst unique=[]; const seen=new Set();\nfor (const ch of chunks.sort((a,b)=>b.authority_rank-a.authority_rank || b.score-a.score)) {\n  const k=`${ch.source_id}::${ch.chunk_id}`; if (!seen.has(k)) {seen.add(k); unique.push(ch);}\n}\nreturn [{json:{case_id:requests[0]?.case_id,case_bundle:requests[0]?.case_bundle,corpus_version:$env.AMAS_CORPUS_VERSION || null,workspace_slug:$env.ANYTHINGLLM_WORKSPACE_SLUG,policy_evidence:unique.slice(0,30),retrieval_records:records,n8n_execution_id:$execution.id}}];"
+      },
+      "id": "03e7d8f2-808a-5475-b4cf-2b392adda8da",
+      "name": "Normalize and Deduplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        750,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH p AS (SELECT $1::jsonb AS j),\nparams AS (\n  SELECT j, COALESCE(NULLIF(j#>>'{case_bundle,case,issue_date}','')::date,CURRENT_DATE) AS effective_on\n  FROM p\n),\ncandidates AS (\n  SELECT ordinality, value AS chunk\n  FROM params CROSS JOIN LATERAL jsonb_array_elements(COALESCE(j->'policy_evidence','[]'::jsonb)) WITH ORDINALITY\n),\nmatched AS (\n  SELECT c.ordinality,\n    c.chunk || jsonb_build_object(\n      'source_id',ps.source_id,\n      'version',ps.version,\n      'authority_rank',ps.authority_rank,\n      'status',ps.status,\n      'metadata',COALESCE(c.chunk->'metadata','{}'::jsonb) || jsonb_build_object(\n        'registry_validated',true,\n        'policy_source_record_id',ps.id::text,\n        'authority_scope',ps.authority_scope,\n        'effective_from',ps.effective_from,\n        'effective_to',ps.effective_to,\n        'sha256',ps.sha256\n      )\n    ) AS chunk\n  FROM candidates c\n  CROSS JOIN params pa\n  CROSS JOIN LATERAL (\n    SELECT src.*\n    FROM amas.policy_sources src\n    WHERE src.source_id=c.chunk->>'source_id'\n      AND (NULLIF(c.chunk->>'version','') IS NULL OR src.version=c.chunk->>'version')\n      AND src.status='active'\n      AND (src.effective_from IS NULL OR src.effective_from<=pa.effective_on)\n      AND (src.effective_to IS NULL OR src.effective_to>=pa.effective_on)\n    ORDER BY CASE WHEN src.version=c.chunk->>'version' THEN 0 ELSE 1 END,\n             src.authority_rank DESC, src.created_at DESC\n    LIMIT 1\n  ) ps\n),\naccepted AS (\n  SELECT COALESCE(jsonb_agg(chunk ORDER BY ordinality),'[]'::jsonb) AS chunks FROM matched\n),\nrejected AS (\n  SELECT COALESCE(jsonb_agg(jsonb_build_object(\n    'source_id',c.chunk->>'source_id',\n    'chunk_id',c.chunk->>'chunk_id',\n    'reason','source/version is not registered, active, and effective for this case'\n  ) ORDER BY c.ordinality),'[]'::jsonb) AS chunks\n  FROM candidates c\n  WHERE NOT EXISTS (SELECT 1 FROM matched m WHERE m.ordinality=c.ordinality)\n)\nSELECT\n  j->>'case_id' AS case_id,\n  j->'case_bundle' AS case_bundle,\n  j->>'corpus_version' AS corpus_version,\n  j->>'workspace_slug' AS workspace_slug,\n  accepted.chunks AS policy_evidence,\n  rejected.chunks AS registry_rejected,\n  j->'retrieval_records' AS retrieval_records,\n  j->>'n8n_execution_id' AS n8n_execution_id\nFROM params CROSS JOIN accepted CROSS JOIN rejected;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "id": "438bdb21-ddff-5922-ab0b-963c69ecf265",
+      "name": "Validate Policy Registry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        980,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "amas-postgresql-placeholder",
+          "name": "AMAS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO amas.retrieval_runs(case_id,query,corpus_version,workspace_slug,request,response,accepted_chunks,n8n_execution_id)\nVALUES($1::uuid,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8)\nRETURNING jsonb_build_object('case_id',$1,'case_bundle',$9::jsonb,'corpus_version',$3,'workspace_slug',$4,'policy_evidence',$7::jsonb,'registry_rejected',$10::jsonb,'retrieval_run_id',id::text) AS output;",
+        "options": {
+          "queryReplacement": "={{ [$json.case_id,$json.retrieval_records.map(r=>r.query).join(' | '),$json.corpus_version,$json.workspace_slug,JSON.stringify($json.retrieval_records.map(r=>r.request)),JSON.stringify($json.retrieval_records.map(r=>r.response)),JSON.stringify($json.policy_evidence),$execution.id,JSON.stringify($json.case_bundle),JSON.stringify($json.registry_rejected || [])] }}"
+        }
+      },
+      "id": "b8c9ae34-c729-596d-9e7a-e3772f74ede2",
+      "name": "Store Retrieval",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1220,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "amas-postgresql-placeholder",
+          "name": "AMAS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.output }}",
+        "options": {}
+      },
+      "id": "70f3318d-d277-5201-a126-195b64610e0b",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1460,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Policy Retrieval Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Retrieval Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Retrieval Queries": {
+      "main": [
+        [
+          {
+            "node": "AnythingLLM Vector Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AnythingLLM Vector Search": {
+      "main": [
+        [
+          {
+            "node": "Normalize and Deduplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize and Deduplicate": {
+      "main": [
+        [
+          {
+            "node": "Validate Policy Registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Policy Registry": {
+      "main": [
+        [
+          {
+            "node": "Store Retrieval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Retrieval": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "7e038560-c37f-5c00-a209-23fc3b51cebe",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

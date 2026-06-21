@@ -1,0 +1,117 @@
+{
+  "name": "AMAS 30 - Human Review Boundary",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "amas/v1/reviews",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "ac601442-a15f-5eb4-af3d-a98c4819f434",
+      "name": "Review Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const headers = $json.headers || {};\nconst received = String(headers['x-amas-api-token'] || headers['X-AMAS-API-Token'] || '');\nconst expected = String($env.AMAS_API_TOKEN || '');\nif (!expected) throw new Error('AMAS_API_TOKEN is not configured');\nif (received.length !== expected.length) throw new Error('Unauthorized');\nlet diff = 0;\nfor (let i = 0; i < expected.length; i++) diff |= received.charCodeAt(i) ^ expected.charCodeAt(i);\nif (diff !== 0) throw new Error('Unauthorized');\nconst body = $json.body ?? $json;\n\nconst decisions=['accept','accept_with_amendments','dismiss','request_rerun','escalate','approve','reject'];\nfor(const f of ['case_id','report_id','reviewer_id','decision'])if(!body[f])throw new Error(`Missing ${f}`);\nif(!decisions.includes(body.decision))throw new Error('Unsupported review decision');\nbody.changes=body.changes||{};return [{json:body}];"
+      },
+      "id": "ebfc9223-8fb4-527b-96ea-d2067d5ae494",
+      "name": "Authenticate and Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ins AS (\n INSERT INTO amas.review_actions(case_id,report_id,finding_id,reviewer_id,decision,comment,changes)\n VALUES($1::uuid,$2::uuid,NULLIF($3,'')::uuid,$4,$5::amas.review_decision,NULLIF($6,''),$7::jsonb) RETURNING id,decision\n), report_upd AS (\n UPDATE amas.reports SET status=CASE WHEN $5='approve' THEN 'approved' WHEN $5='reject' THEN 'rejected' ELSE status END WHERE id=$2::uuid RETURNING id\n), case_upd AS (\n UPDATE amas.cases SET status=CASE WHEN $5='approve' THEN 'approved'::amas.case_status WHEN $5='reject' THEN 'rejected'::amas.case_status WHEN $5='accept_with_amendments' THEN 'approved_with_changes'::amas.case_status ELSE status END WHERE id=$1::uuid RETURNING id,status\n), audit AS (\n SELECT amas.append_audit($1::uuid,'user',$4,'review_action','report',$2,jsonb_build_object('decision',$5,'finding_id',NULLIF($3,'')),NULL,$8)\n)\nSELECT jsonb_build_object('review_action_id',ins.id::text,'case_id',$1,'report_id',$2,'decision',ins.decision,'case_status',case_upd.status) AS output FROM ins CROSS JOIN case_upd;",
+        "options": {
+          "queryReplacement": "={{ [$json.case_id,$json.report_id,$json.finding_id || '',$json.reviewer_id,$json.decision,$json.comment || '',JSON.stringify($json.changes),$execution.id] }}"
+        }
+      },
+      "id": "7b4f56e9-e484-5071-9f87-6a713fdb8636",
+      "name": "Record Review",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        500,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "amas-postgresql-placeholder",
+          "name": "AMAS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.output }}",
+        "options": {}
+      },
+      "id": "84bb080f-c19a-5823-9177-9e5d1f716611",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        750,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Review Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate and Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate and Validate": {
+      "main": [
+        [
+          {
+            "node": "Record Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Review": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "306d042a-4108-565e-a2d6-a211feccb7ac",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

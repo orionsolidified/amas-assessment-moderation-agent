@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orionsolidified.io/schemas/amas/specialist-output.schema.json",
+  "title": "AMAS Specialist Output",
+  "type": "object",
+  "required": ["specialist_key", "summary", "findings", "uncertainties"],
+  "properties": {
+    "specialist_key": {"type": "string"},
+    "applicable": {"type": "boolean", "default": true},
+    "summary": {"type": "string"},
+    "findings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/finding"}
+    },
+    "uncertainties": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["question", "impact"],
+        "properties": {
+          "question": {"type": "string"},
+          "impact": {"type": "string"},
+          "required_information": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "metrics": {"type": "object", "additionalProperties": true}
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "required": ["source_type", "source_id", "locator", "excerpt"],
+      "properties": {
+        "source_type": {"enum": ["assessment_brief", "rubric", "module_descriptor", "learning_outcome", "policy", "preflight", "other"]},
+        "source_id": {"type": "string"},
+        "chunk_id": {"type": ["string", "null"]},
+        "locator": {"type": "string"},
+        "excerpt": {"type": "string", "maxLength": 1200}
+      },
+      "additionalProperties": false
+    },
+    "finding": {
+      "type": "object",
+      "required": ["code", "category", "severity", "observation", "recommendation", "confidence", "human_judgment_required", "evidence"],
+      "properties": {
+        "finding_ref": {"type": ["string", "null"]},
+        "code": {"type": "string", "pattern": "^[A-Z0-9_]{3,80}$"},
+        "category": {"type": "string"},
+        "severity": {"enum": ["info", "minor", "major", "critical"]},
+        "observation": {"type": "string"},
+        "interpretation": {"type": ["string", "null"]},
+        "recommendation": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "human_judgment_required": {"type": "boolean"},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
+        "metadata": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

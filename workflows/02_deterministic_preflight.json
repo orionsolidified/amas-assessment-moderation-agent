@@ -1,0 +1,175 @@
+{
+  "name": "AMAS 02 - Deterministic Preflight",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "amas/internal/preflight",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "98e1e73f-a3b9-52c3-b4d1-9f92ceda579b",
+      "name": "Preflight Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const headers = $json.headers || {};\nconst auth = String(headers.authorization || headers.Authorization || '');\nconst bearer = auth.replace(/^Bearer\\s+/i, '');\nconst received = String(headers['x-amas-internal-token'] || bearer || '');\nconst expected = String($env.AMAS_INTERNAL_TOKEN || '');\nif (!expected) throw new Error('AMAS_INTERNAL_TOKEN is not configured');\nif (received.length !== expected.length) throw new Error('Unauthorized');\nlet diff = 0;\nfor (let i = 0; i < expected.length; i++) diff |= received.charCodeAt(i) ^ expected.charCodeAt(i);\nif (diff !== 0) throw new Error('Unauthorized');\nconst body = $json.body ?? $json;\n\nreturn [{ json: body }];"
+      },
+      "id": "136e323b-cdc2-536d-804c-ef7f158f6d52",
+      "name": "Authenticate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        210,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT amas.case_bundle($1::uuid) AS case_bundle;",
+        "options": {
+          "queryReplacement": "={{ [$json.case_id] }}"
+        }
+      },
+      "id": "1343f523-a7b6-5e3d-9311-c81d110d2c5a",
+      "name": "Load Case Bundle",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        430,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "amas-postgresql-placeholder",
+          "name": "AMAS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const bundle = $json.case_bundle;\nif (!bundle || !bundle.case) throw new Error('Case not found');\nconst c = bundle.case;\nconst artifacts = bundle.artifacts || [];\nconst los = bundle.learning_outcomes || [];\nconst byType = Object.fromEntries(artifacts.map(a => [a.artifact_type, a]));\nconst brief = String(byType.assessment_brief?.extracted_text || '');\nconst rubric = String(byType.rubric?.extracted_text || '');\nconst moduleDescriptor = String(byType.module_descriptor?.extracted_text || '');\nconst allText = [brief, rubric, moduleDescriptor, ...artifacts.filter(a => !['assessment_brief','rubric','module_descriptor'].includes(a.artifact_type)).map(a => a.extracted_text || '')].join('\\n');\nconst findings = [];\nconst facts = {\n  artifact_count: artifacts.length,\n  learning_outcome_count: los.length,\n  extraction_errors: [],\n  mark_candidates: [],\n  rubric_total: null,\n  referenced_learning_outcomes: [],\n  missing_learning_outcomes: [],\n  injection_indicators: [],\n  possible_personal_data: []\n};\nfunction add(code, category, severity, observation, recommendation, evidence = [], confidence = 1) {\n  findings.push({finding_ref:`PREFLIGHT-${String(findings.length+1).padStart(3,'0')}`,code,category,severity,observation,interpretation:null,recommendation,confidence,human_judgment_required:true,evidence,metadata:{deterministic:true},verification_status:'verified'});\n}\nfor (const a of artifacts) {\n  if (String(a.extraction_status || '').startsWith('extraction_error') || a.extraction_status === 'ocr_required') {\n    facts.extraction_errors.push({artifact_type:a.artifact_type,status:a.extraction_status});\n    add('ARTIFACT_TEXT_UNAVAILABLE','document_integrity','major',`${a.artifact_type} text is unavailable (${a.extraction_status}).`,'Provide a machine-readable version or complete controlled OCR before moderation.',[{source_type:a.artifact_type,source_id:`CASE-${a.artifact_type.toUpperCase()}`,locator:'whole document',excerpt:''}],1);\n  }\n}\nif (!brief.trim()) add('ASSESSMENT_BRIEF_MISSING','document_integrity','critical','The assessment brief has no extractable text.','Provide the assessment brief before moderation.',[],1);\nif (!rubric.trim()) add('RUBRIC_MISSING','document_integrity','critical','The rubric has no extractable text.','Provide the rubric before moderation.',[],1);\nif (!los.length) add('LEARNING_OUTCOMES_MISSING','outcome_alignment','critical','No learning outcomes were supplied.','Provide the approved module learning outcomes.',[],1);\nif (c.issue_date && c.submission_date && new Date(c.submission_date) <= new Date(c.issue_date)) {\n  add('INVALID_DATE_SEQUENCE','administrative_integrity','critical',`Submission date ${c.submission_date} is not after issue date ${c.issue_date}.`,'Correct the assessment dates.',[{source_type:'preflight',source_id:'PREFLIGHT',locator:'case metadata',excerpt:`issue_date=${c.issue_date}; submission_date=${c.submission_date}`}],1);\n}\nconst markLine = /^.{0,220}?(\\d+(?:\\.\\d+)?)\\s*(?:marks?|points?|%)\\s*$/gim;\nlet m;\nwhile ((m = markLine.exec(rubric)) !== null) {\n  const value = Number(m[1]);\n  if (value >= 0 && value <= 100) facts.mark_candidates.push({line:m[0].trim(),value});\n}\nif (facts.mark_candidates.length >= 2) {\n  const total = Math.round(facts.mark_candidates.reduce((s,x)=>s+x.value,0)*100)/100;\n  facts.rubric_total = total;\n  if (Math.abs(total-100) > 0.01) add('RUBRIC_TOTAL_INVALID','rubric_quality','critical',`Extracted rubric allocations total ${total}, not 100.`,'Correct and independently verify the rubric arithmetic.',[{source_type:'rubric',source_id:'CASE-RUBRIC',locator:'criterion mark allocations',excerpt:facts.mark_candidates.map(x=>x.line).slice(0,12).join(' | ')}],0.99);\n}\nconst weightMatches = [...brief.matchAll(/(?:weight(?:ing)?|worth)\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)\\s*%/gi)].map(x=>Number(x[1]));\nif (c.assessment_weight != null && weightMatches.length && !weightMatches.some(v=>Math.abs(v-Number(c.assessment_weight))<0.01)) {\n  add('ASSESSMENT_WEIGHT_CONFLICT','administrative_integrity','major',`Case metadata states ${c.assessment_weight}% but the brief contains ${[...new Set(weightMatches)].join(', ')}%.`,'Reconcile the approved module weighting and the published brief.',[{source_type:'assessment_brief',source_id:'CASE-ASSESSMENT_BRIEF',locator:'weighting statement',excerpt:brief.match(/.{0,80}(?:weight(?:ing)?|worth).{0,80}/i)?.[0] || ''}],0.98);\n}\nfor (const lo of los) {\n  const code = String(lo.outcome_code || '').trim();\n  if (!code) continue;\n  const pattern = new RegExp(`\\\\b${code.replace(/[.*+?^${}()|[\\\\]\\\\]/g,'\\\\$&')}\\\\b`,'i');\n  if (pattern.test(brief + '\\n' + rubric)) facts.referenced_learning_outcomes.push(code);\n  else facts.missing_learning_outcomes.push(code);\n}\nif (facts.missing_learning_outcomes.length) add('OUTCOME_REFERENCES_ABSENT','outcome_alignment','major',`No explicit reference was found for: ${facts.missing_learning_outcomes.join(', ')}.`,'Verify that every assessed outcome is intentionally elicited and represented in the rubric.',los.filter(lo=>facts.missing_learning_outcomes.includes(lo.outcome_code)).map(lo=>({source_type:'learning_outcome',source_id:lo.outcome_code,locator:'declared outcome',excerpt:lo.description})),0.9);\nconst injectionPatterns = [\n  /ignore\\s+(?:all\\s+)?(?:previous|prior)\\s+instructions?/ig,\n  /system\\s+prompt/ig,\n  /reveal\\s+(?:your|the)\\s+(?:instructions?|secrets?|tools?)/ig,\n  /(?:call|invoke|use)\\s+(?:the\\s+)?(?:tool|function|api)/ig,\n  /send\\s+(?:the\\s+)?(?:data|student|report).{0,80}(?:email|address|webhook)/ig\n];\nfor (const re of injectionPatterns) for (const hit of allText.matchAll(re)) facts.injection_indicators.push(hit[0]);\nif (facts.injection_indicators.length) add('SUSPECTED_PROMPT_INJECTION','security','critical',`Uploaded content contains ${facts.injection_indicators.length} instruction-like pattern(s) directed at an AI system.`,'Treat embedded instructions as untrusted data; inspect the source and do not grant action permissions.',[{source_type:'other',source_id:'CASE-UPLOADS',locator:'embedded text',excerpt:[...new Set(facts.injection_indicators)].slice(0,8).join(' | ')}],0.99);\nconst emails = [...allText.matchAll(/\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b/gi)].map(x=>x[0]);\nconst studentIds = [...allText.matchAll(/\\b(?:student\\s*(?:id|no)|registration\\s*(?:id|no))\\s*[:#-]?\\s*[A-Z0-9/-]{4,20}\\b/gi)].map(x=>x[0]);\nfacts.possible_personal_data = [...new Set([...emails,...studentIds])].slice(0,30);\nif (facts.possible_personal_data.length) add('POSSIBLE_PERSONAL_DATA','privacy','major',`The submitted package may contain personal identifiers (${facts.possible_personal_data.length} detected).`,'Remove or pseudonymise personal data unless an approved processing basis and protected model environment exist.',[{source_type:'other',source_id:'CASE-UPLOADS',locator:'detected identifiers',excerpt:facts.possible_personal_data.join(' | ')}],0.85);\nreturn [{json:{case_id:c.id,case_bundle:bundle,facts,findings,status:'completed',workflow_version:$env.AMAS_WORKFLOW_VERSION || 'unknown',n8n_execution_id:$execution.id}}];"
+      },
+      "id": "0398d2f8-7b4b-51ca-90aa-68344a5b348e",
+      "name": "Run Deterministic Checks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ins AS (\n  INSERT INTO amas.preflight_runs(case_id,workflow_version,status,facts,findings,completed_at,n8n_execution_id)\n  VALUES($1::uuid,$2,'completed',$3::jsonb,$4::jsonb,now(),$5)\n  RETURNING id\n), upd AS (\n  UPDATE amas.cases SET status='preflight' WHERE id=$1::uuid RETURNING id\n), audit AS (\n  SELECT amas.append_audit($1::uuid,'system','preflight','preflight_completed','preflight_run',ins.id::text,\n    jsonb_build_object('finding_count',jsonb_array_length($4::jsonb)),NULL,$5) FROM ins\n)\nSELECT jsonb_build_object('case_id',$1,'facts',$3::jsonb,'findings',$4::jsonb,'workflow_version',$2,'preflight_run_id',ins.id::text) AS output FROM ins;",
+        "options": {
+          "queryReplacement": "={{ [$json.case_id,$json.workflow_version,JSON.stringify($json.facts),JSON.stringify($json.findings),$execution.id] }}"
+        }
+      },
+      "id": "5724d89a-9a68-584a-8df4-c8e7cc0ce953",
+      "name": "Store Preflight",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        900,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "amas-postgresql-placeholder",
+          "name": "AMAS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.output }}",
+        "options": {}
+      },
+      "id": "ed3159ae-5a77-579c-bf06-fb46b1a1dd61",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1140,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Preflight Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authenticate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate": {
+      "main": [
+        [
+          {
+            "node": "Load Case Bundle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Case Bundle": {
+      "main": [
+        [
+          {
+            "node": "Run Deterministic Checks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Deterministic Checks": {
+      "main": [
+        [
+          {
+            "node": "Store Preflight",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Preflight": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "5f2f1c6b-3c23-5c2d-a995-09c00c64cd95",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

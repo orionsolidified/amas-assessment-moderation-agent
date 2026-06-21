@@ -1,0 +1,115 @@
+{
+  "schema_version": "1.0",
+  "prompts": [
+    {
+      "key": "assessment_profiler",
+      "version": "1.0.0",
+      "system": "assessment_profiler.system.md",
+      "user": "assessment_profiler.user.md",
+      "schema": "../schemas/profiler-output.schema.json",
+      "model_config": {
+        "temperature": 0.0,
+        "max_tokens": 1600
+      }
+    },
+    {
+      "key": "outcome_alignment",
+      "version": "1.0.0",
+      "system": "outcome_alignment.system.md",
+      "user": "outcome_alignment.user.md",
+      "schema": "../schemas/specialist-output.schema.json",
+      "model_config": {
+        "temperature": 0.1,
+        "max_tokens": 5000
+      }
+    },
+    {
+      "key": "rubric_quality",
+      "version": "1.0.0",
+      "system": "rubric_quality.system.md",
+      "user": "rubric_quality.user.md",
+      "schema": "../schemas/specialist-output.schema.json",
+      "model_config": {
+        "temperature": 0.1,
+        "max_tokens": 4500
+      }
+    },
+    {
+      "key": "assessment_validity",
+      "version": "1.0.0",
+      "system": "assessment_validity.system.md",
+      "user": "assessment_validity.user.md",
+      "schema": "../schemas/specialist-output.schema.json",
+      "model_config": {
+        "temperature": 0.1,
+        "max_tokens": 4500
+      }
+    },
+    {
+      "key": "ai_use_design",
+      "version": "1.0.0",
+      "system": "ai_use_design.system.md",
+      "user": "ai_use_design.user.md",
+      "schema": "../schemas/specialist-output.schema.json",
+      "model_config": {
+        "temperature": 0.15,
+        "max_tokens": 4500
+      }
+    },
+    {
+      "key": "policy_accessibility",
+      "version": "1.0.0",
+      "system": "policy_accessibility.system.md",
+      "user": "policy_accessibility.user.md",
+      "schema": "../schemas/specialist-output.schema.json",
+      "model_config": {
+        "temperature": 0.0,
+        "max_tokens": 4500
+      }
+    },
+    {
+      "key": "programming_assessment",
+      "version": "1.0.0",
+      "system": "programming_assessment.system.md",
+      "user": "programming_assessment.user.md",
+      "schema": "../schemas/specialist-output.schema.json",
+      "model_config": {
+        "temperature": 0.1,
+        "max_tokens": 4000
+      }
+    },
+    {
+      "key": "group_work",
+      "version": "1.0.0",
+      "system": "group_work.system.md",
+      "user": "group_work.user.md",
+      "schema": "../schemas/specialist-output.schema.json",
+      "model_config": {
+        "temperature": 0.1,
+        "max_tokens": 3500
+      }
+    },
+    {
+      "key": "adversarial_critic",
+      "version": "1.0.0",
+      "system": "adversarial_critic.system.md",
+      "user": "adversarial_critic.user.md",
+      "schema": "../schemas/critic-output.schema.json",
+      "model_config": {
+        "temperature": 0.0,
+        "max_tokens": 4500
+      }
+    },
+    {
+      "key": "report_synthesis",
+      "version": "1.0.0",
+      "system": "report_synthesis.system.md",
+      "user": "report_synthesis.user.md",
+      "schema": "../schemas/report.schema.json",
+      "model_config": {
+        "temperature": 0.0,
+        "max_tokens": 7000
+      }
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "name": "AMAS 21 - Evidence and Citation Verifier",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "amas/internal/evidence-verifier",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1fb52318-9678-5e6b-b2ad-c263eb21979e",
+      "name": "Evidence Verifier Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const headers = $json.headers || {};\nconst auth = String(headers.authorization || headers.Authorization || '');\nconst bearer = auth.replace(/^Bearer\\s+/i, '');\nconst received = String(headers['x-amas-internal-token'] || bearer || '');\nconst expected = String($env.AMAS_INTERNAL_TOKEN || '');\nif (!expected) throw new Error('AMAS_INTERNAL_TOKEN is not configured');\nif (received.length !== expected.length) throw new Error('Unauthorized');\nlet diff = 0;\nfor (let i = 0; i < expected.length; i++) diff |= received.charCodeAt(i) ^ expected.charCodeAt(i);\nif (diff !== 0) throw new Error('Unauthorized');\nconst body = $json.body ?? $json;\n\nconst bundle=body.case_bundle||{};\nconst artifacts=bundle.artifacts||[];\nconst los=bundle.learning_outcomes||[];\nconst preflight=body.preflight||{};\nconst policy=(body.policy_evidence?.policy_evidence||body.policy_evidence||body.policy||[]);\nconst specialistOutputs=body.specialist_outputs||[];\nconst norm=s=>String(s||'').replace(/\\s+/g,' ').trim().toLowerCase();\nconst artifactMap=new Map();\nfor (const a of artifacts) {\n  const base=`CASE-${String(a.artifact_type).toUpperCase()}`;\n  if (a.source_id) artifactMap.set(String(a.source_id),a);\n  if (['assessment_brief','rubric','module_descriptor','programme_specification'].includes(a.artifact_type)) artifactMap.set(base,a);\n  artifactMap.set(String(a.id),a);\n}\nconst loMap=new Map(los.map(lo=>[String(lo.outcome_code),lo]));\nconst policyMap=new Map(policy.map(p=>[`${p.source_id}::${p.chunk_id||''}`,p]));\nconst preflightCodes=new Set((preflight.findings||[]).map(f=>f.code));\nconst verified=[]; const rejected=[];\nfunction evidenceValid(ev) {\n  if (!ev||!ev.source_type||!ev.source_id) return {ok:false,reason:'missing evidence identity'};\n  let sourceText='';\n  if (ev.source_type==='policy') {\n    const p=policyMap.get(`${ev.source_id}::${ev.chunk_id||''}`) || policy.find(x=>x.source_id===ev.source_id);\n    if (!p) return {ok:false,reason:'policy source/chunk was not retrieved'};\n    if (String(p.status||'active')!=='active') return {ok:false,reason:'policy source is not active'};\n    if (p.metadata?.registry_validated!==true) return {ok:false,reason:'policy source was not validated against the PostgreSQL authority registry'};\n    sourceText=p.excerpt||p.text||'';\n  } else if (ev.source_type==='learning_outcome') {\n    const lo=loMap.get(String(ev.source_id)); if (!lo) return {ok:false,reason:'learning outcome does not exist'};\n    sourceText=lo.description||'';\n  } else if (ev.source_type==='preflight') {\n    if (ev.source_id!=='PREFLIGHT' && !preflightCodes.has(ev.source_id)) return {ok:false,reason:'preflight source does not exist'};\n    return {ok:true,reason:'deterministic preflight evidence'};\n  } else {\n    const a=artifactMap.get(String(ev.source_id)); if (!a) return {ok:false,reason:'case artifact does not exist'};\n    sourceText=a.extracted_text||'';\n  }\n  const excerpt=norm(ev.excerpt);\n  if (!excerpt) return {ok:false,reason:'empty excerpt'};\n  const source=norm(sourceText);\n  const probe=excerpt.slice(0,Math.min(140,excerpt.length));\n  if (!source.includes(probe)) {\n    const words=probe.split(' ').filter(w=>w.length>4);\n    const overlap=words.length?words.filter(w=>source.includes(w)).length/words.length:0;\n    if (overlap<0.65) return {ok:false,reason:'excerpt is not supported by identified source'};\n  }\n  return {ok:true,reason:'matched source'};\n}\nfor (const wrapper of specialistOutputs) {\n  const out=wrapper.output||wrapper;\n  for (const f0 of (out.findings||[])) {\n    const f=JSON.parse(JSON.stringify(f0));\n    const checks=(f.evidence||[]).map(evidenceValid);\n    const validCount=checks.filter(x=>x.ok).length;\n    const requiresPolicy=(f.category==='policy_compliance'||String(f.code).includes('POLICY'));\n    const hasPolicy=(f.evidence||[]).some((e,i)=>e.source_type==='policy'&&checks[i]?.ok);\n    const requiredCount=['major','critical'].includes(f.severity)?1:0;\n    const ok=validCount>=requiredCount && (!requiresPolicy||hasPolicy);\n    f.metadata={...(f.metadata||{}),evidence_checks:checks,origin_specialist:out.specialist_key||wrapper.specialist_key};\n    f.verification_status=ok?'verified':'rejected';\n    if (ok) verified.push(f); else rejected.push({...f,rejection_reason:checks.filter(x=>!x.ok).map(x=>x.reason).join('; ') || 'insufficient supporting evidence'});\n  }\n}\nreturn [{json:{case_id:body.case_id,case_bundle:bundle,preflight,policy_evidence:body.policy_evidence,assessment_profile:body.assessment_profile,specialist_outputs:specialistOutputs,verified_findings:verified,rejected_findings:rejected,verification_summary:{verified:verified.length,rejected:rejected.length},provenance_seed:body.provenance_seed||{},use_critic_model:true}}];"
+      },
+      "id": "ec220af9-9467-572a-b274-b8d13ebba87a",
+      "name": "Verify Evidence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        250,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "79014b15-9951-5621-ae88-f22d6789a3a1",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        510,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Evidence Verifier Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify Evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Evidence": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "a9191561-bba0-55ac-b875-bc46ef505469",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

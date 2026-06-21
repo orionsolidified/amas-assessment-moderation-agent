@@ -1,0 +1,125 @@
+{
+  "schema_version": "1.0",
+  "workflows": [
+    {
+      "file": "00_health.json",
+      "name": "AMAS 00 - Health",
+      "versionId": "ff456e32-b7f2-58b9-a9ff-34106a775ebc",
+      "active": false
+    },
+    {
+      "file": "01_case_intake.json",
+      "name": "AMAS 01 - Case Intake",
+      "versionId": "2313e68b-7849-519a-a302-a827d06a4efc",
+      "active": false
+    },
+    {
+      "file": "02_deterministic_preflight.json",
+      "name": "AMAS 02 - Deterministic Preflight",
+      "versionId": "5f2f1c6b-3c23-5c2d-a995-09c00c64cd95",
+      "active": false
+    },
+    {
+      "file": "03_policy_retrieval.json",
+      "name": "AMAS 03 - AnythingLLM Policy Retrieval",
+      "versionId": "7e038560-c37f-5c00-a209-23fc3b51cebe",
+      "active": false
+    },
+    {
+      "file": "09_assessment_profiler.json",
+      "name": "AMAS 09 - Assessment Profiling Supervisor",
+      "versionId": "fb3e9aeb-009a-5cb0-b22b-3161cce2adac",
+      "active": false
+    },
+    {
+      "file": "10_outcome_alignment.json",
+      "name": "AMAS 10 - Outcome Alignment Specialist",
+      "versionId": "ad1c063b-ad7d-5177-abbd-f9ceed34e30f",
+      "active": false
+    },
+    {
+      "file": "11_rubric_quality.json",
+      "name": "AMAS 11 - Rubric Quality Specialist",
+      "versionId": "900e1777-9e86-50b8-8581-d1b18cbbb72e",
+      "active": false
+    },
+    {
+      "file": "12_assessment_validity.json",
+      "name": "AMAS 12 - Assessment Validity Specialist",
+      "versionId": "62c62a7e-72c8-566c-92d7-368714e725a6",
+      "active": false
+    },
+    {
+      "file": "13_ai_use_design.json",
+      "name": "AMAS 13 - AI Use Design Specialist",
+      "versionId": "6e51cd1f-a2be-52d2-8a2f-3de6af717d7b",
+      "active": false
+    },
+    {
+      "file": "14_policy_accessibility.json",
+      "name": "AMAS 14 - Policy and Accessibility Specialist",
+      "versionId": "1156b11c-2b82-536a-ac1c-023b7ca775fa",
+      "active": false
+    },
+    {
+      "file": "15_programming_assessment.json",
+      "name": "AMAS 15 - Programming Assessment Specialist",
+      "versionId": "98da5045-edc3-5252-85f2-dea85aeac160",
+      "active": false
+    },
+    {
+      "file": "16_group_work.json",
+      "name": "AMAS 16 - Group Work Specialist",
+      "versionId": "5d023a49-d233-5121-a5b0-8aa1226ca9be",
+      "active": false
+    },
+    {
+      "file": "20_moderation_orchestrator.json",
+      "name": "AMAS 20 - Moderation Orchestrator",
+      "versionId": "97461cc4-fa3f-5646-83e9-4cdcdd8ffd03",
+      "active": false
+    },
+    {
+      "file": "21_evidence_verifier.json",
+      "name": "AMAS 21 - Evidence and Citation Verifier",
+      "versionId": "a9191561-bba0-55ac-b875-bc46ef505469",
+      "active": false
+    },
+    {
+      "file": "22_adversarial_critic.json",
+      "name": "AMAS 22 - Adversarial Critic",
+      "versionId": "377df507-012c-56ab-9193-c121033f0e43",
+      "active": false
+    },
+    {
+      "file": "23_report_synthesis.json",
+      "name": "AMAS 23 - Canonical Report Synthesis",
+      "versionId": "ec46a524-5dc2-5586-a208-7b023b9e12c3",
+      "active": false
+    },
+    {
+      "file": "30_human_review.json",
+      "name": "AMAS 30 - Human Review Boundary",
+      "versionId": "306d042a-4108-565e-a2d6-a211feccb7ac",
+      "active": false
+    },
+    {
+      "file": "31_report_api.json",
+      "name": "AMAS 31 - Report API",
+      "versionId": "f46f0ea6-5aae-5b6c-b0bf-50131b5608b6",
+      "active": false
+    },
+    {
+      "file": "40_promptfoo_evaluation_endpoint.json",
+      "name": "AMAS 40 - Promptfoo Evaluation Endpoint",
+      "versionId": "db4b6aa4-c837-5813-9aeb-8ea982f319bc",
+      "active": false
+    },
+    {
+      "file": "90_knowledge_ingestion.json",
+      "name": "AMAS 90 - Authoritative Knowledge Ingestion",
+      "versionId": "12f410ac-93f1-51f2-90c5-16c24831279a",
+      "active": false
+    }
+  ]
+}

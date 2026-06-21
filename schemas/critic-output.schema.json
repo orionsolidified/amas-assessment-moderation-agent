@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["finding_reviews", "missing_analyses", "systemic_risks", "critic_summary"],
+  "properties": {
+    "finding_reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["finding_ref", "action", "concise_reason"],
+        "properties": {
+          "finding_ref": {"type": "string"},
+          "action": {"enum": ["uphold", "revise", "downgrade", "reject"]},
+          "revised_severity": {"enum": ["info", "minor", "major", "critical", null]},
+          "concise_reason": {"type": "string"},
+          "revised_recommendation": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "missing_analyses": {"type": "array", "items": {"type": "string"}},
+    "systemic_risks": {"type": "array", "items": {"type": "string"}},
+    "critic_summary": {"type": "string"}
+  },
+  "additionalProperties": false
+}

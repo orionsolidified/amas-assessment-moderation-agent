@@ -1,0 +1,6 @@
+jsonschema>=4.23,<5
+pytest>=8.3,<9
+PyYAML>=6.0,<7
+ruff>=0.12,<1
+pglast>=7,<8
+referencing>=0.35,<1

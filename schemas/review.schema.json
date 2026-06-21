@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orionsolidified.io/schemas/amas/review.schema.json",
+  "title": "AMAS Human Review Action",
+  "type": "object",
+  "required": ["case_id", "report_id", "reviewer_id", "decision"],
+  "properties": {
+    "case_id": {"type": "string", "format": "uuid"},
+    "report_id": {"type": "string", "format": "uuid"},
+    "finding_id": {"type": ["string", "null"], "format": "uuid"},
+    "reviewer_id": {"type": "string", "minLength": 1},
+    "decision": {"enum": ["accept", "accept_with_amendments", "dismiss", "request_rerun", "escalate", "approve", "reject"]},
+    "comment": {"type": ["string", "null"]},
+    "changes": {"type": "object", "additionalProperties": true}
+  },
+  "additionalProperties": false
+}
